@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                OpenMMAmoeba                                *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2008-2019 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -42,6 +40,14 @@ using namespace std;
 HippoNonbondedForce::HippoNonbondedForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0), switchingDistance(0.9),
         ewaldErrorTol(1e-4), alpha(0.0), dalpha(0.0), nx(0), ny(0), nz(0), dnx(0), dny(0), dnz(0) {
     extrapolationCoefficients = {0.042, 0.635, 0.414};
+}
+
+int HippoNonbondedForce::getNumParticles() const {
+    return particles.size();
+}
+
+int HippoNonbondedForce::getNumExceptions() const {
+    return exceptions.size();
 }
 
 HippoNonbondedForce::NonbondedMethod HippoNonbondedForce::getNonbondedMethod() const {

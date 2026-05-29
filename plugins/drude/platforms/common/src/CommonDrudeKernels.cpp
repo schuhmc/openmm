@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2013-2024 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -504,7 +502,10 @@ void CommonIntegrateDrudeSCFStepKernel::minimize(ContextImpl& context, double to
     int numDrude = drudeParams.getSize();
     int paddedNumAtoms = cc.getPaddedNumAtoms();
     for (int iteration = 0; iteration < 50; iteration++) {
-        context.calcForcesAndEnergy(true, false, context.getIntegrator().getIntegrationForceGroups());
+        {
+            ContextDeselector deselector(cc);
+            context.calcForcesAndEnergy(true, false, context.getIntegrator().getIntegrationForceGroups());
+        }
         minimizeKernel->execute(drudeParams.getSize());
         cc.getLongForceBuffer().download(forces);
         double totalForce = 0;

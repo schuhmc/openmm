@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2008-2024 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -104,11 +102,7 @@ void testExclusionsAnd14() {
         system.addParticle(1.0);
         nonbonded->addParticle(0, 1.5, 0);
     }
-    vector<pair<int, int> > bonds;
-    bonds.push_back(pair<int, int>(0, 1));
-    bonds.push_back(pair<int, int>(1, 2));
-    bonds.push_back(pair<int, int>(2, 3));
-    bonds.push_back(pair<int, int>(3, 4));
+    vector<pair<int, int> > bonds = {{0, 1}, {1, 2}, {2, 3}, {3, 4}};
     nonbonded->createExceptionsFromBonds(bonds, 0.0, 0.0);
     int first14, second14;
     for (int i = 0; i < nonbonded->getNumExceptions(); i++) {
@@ -235,11 +229,7 @@ void testCutoff14() {
     nonbonded->setCutoffDistance(cutoff);
     const double eps = 30.0;
     nonbonded->setReactionFieldDielectric(eps);
-    vector<pair<int, int> > bonds;
-    bonds.push_back(pair<int, int>(0, 1));
-    bonds.push_back(pair<int, int>(1, 2));
-    bonds.push_back(pair<int, int>(2, 3));
-    bonds.push_back(pair<int, int>(3, 4));
+    vector<pair<int, int> > bonds = {{0, 1}, {1, 2}, {2, 3}, {3, 4}};
     nonbonded->createExceptionsFromBonds(bonds, 0.0, 0.0);
     int first14, second14;
     for (int i = 0; i < nonbonded->getNumExceptions(); i++) {
@@ -894,6 +884,39 @@ void testParameterOffsets() {
     // Compute the expected energy.
 
     double energy = 0.0;
+    for (int i = 0; i < 4; i++)
+        for (int j = i+1; j < 4; j++) {
+            double dist = j-i;
+            double x = pairSigma[i][j]/dist;
+            energy += ONE_4PI_EPS0*pairChargeProd[i][j]/dist + 4.0*pairEpsilon[i][j]*(pow(x, 12.0)-pow(x, 6.0));
+        }
+    ASSERT_EQUAL_TOL(energy, context.getState(State::Energy).getPotentialEnergy(), 1e-5);
+
+    // Update the offsets and see if the energy is still correct.
+
+    force->setParticleParameterOffset(0, "p1", 0, 2.0, 0.6, 0.6);
+    force->setParticleParameterOffset(1, "p2", 1, 1.1, 1.1, 2.1);
+    force->setExceptionParameterOffset(0, "p1", 1, 0.4, 0.4, 1.4);
+    force->updateParametersInContext(context);
+    particleCharge = {0.0+2.0*0.5, 1.0+1.1*1.5, -1.0, 0.5};
+    particleSigma = {1.0+0.6*0.5, 0.5+1.1*1.5, 2.0, 2.0};
+    particleEpsilon = {0.5+0.6*0.5, 0.6+2.1*1.5, 0.7, 0.8};
+    for (int i = 0; i < 4; i++)
+        for (int j = i+1; j < 4; j++) {
+            pairChargeProd[i][j] = particleCharge[i]*particleCharge[j];
+            pairSigma[i][j] = 0.5*(particleSigma[i]+particleSigma[j]);
+            pairEpsilon[i][j] = sqrt(particleEpsilon[i]*particleEpsilon[j]);
+        }
+    pairChargeProd[0][3] = 0.0;
+    pairSigma[0][3] = 1.0;
+    pairEpsilon[0][3] = 0.0;
+    pairChargeProd[2][3] = 0.5+0.4*0.5;
+    pairSigma[2][3] = 1.0+0.4*0.5;
+    pairEpsilon[2][3] = 1.5+1.4*0.5;
+    pairChargeProd[0][1] = 1.0;
+    pairSigma[0][1] = 1.5;
+    pairEpsilon[0][1] = 1.0;
+    energy = 0.0;
     for (int i = 0; i < 4; i++)
         for (int j = i+1; j < 4; j++) {
             double dist = j-i;

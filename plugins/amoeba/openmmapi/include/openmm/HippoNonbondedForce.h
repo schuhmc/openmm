@@ -4,12 +4,10 @@
 /* -------------------------------------------------------------------------- *
  *                              OpenMMAmoeba                                  *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2008-2019 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman, Mark Friedrichs                                    *
  * Contributors:                                                              *
  *                                                                            *
@@ -81,15 +79,11 @@ public:
     /**
      * Get the number of particles in the potential function.
      */
-    int getNumParticles() const {
-        return particles.size();
-    }
+    int getNumParticles() const;
     /**
      * Get the number of exceptions.
      */
-    int getNumExceptions() const {
-        return exceptions.size();
-    }
+    int getNumExceptions() const;
     /**
      * Get the method used for handling long-range nonbonded interactions.
      */

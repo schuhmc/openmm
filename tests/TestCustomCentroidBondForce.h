@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2015-2021 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -54,21 +52,9 @@ void testHarmonicBond() {
     system.addParticle(5.0);
     CustomCentroidBondForce* force = new CustomCentroidBondForce(2, "k*distance(g1,g2)^2");
     force->addPerBondParameter("k");
-    vector<int> particles1;
-    particles1.push_back(0);
-    particles1.push_back(1);
-    vector<int> particles2;
-    particles2.push_back(2);
-    particles2.push_back(3);
-    particles2.push_back(4);
-    force->addGroup(particles1);
-    force->addGroup(particles2);
-    vector<int> groups;
-    groups.push_back(0);
-    groups.push_back(1);
-    vector<double> parameters;
-    parameters.push_back(1.0);
-    force->addBond(groups, parameters);
+    force->addGroup({0, 1});
+    force->addGroup({2, 3, 4});
+    force->addBond({0, 1}, {1.0});
     system.addForce(force);
     ASSERT(!system.usesPeriodicBoundaryConditions());
 
@@ -99,8 +85,7 @@ void testHarmonicBond() {
 
     // Update the per-bond parameter and see if the results change.
 
-    parameters[0] = 2.0;
-    force->setBondParameters(0, groups, parameters);
+    force->setBondParameters(0, {0, 1}, {2.0});
     force->updateParametersInContext(context);
     state = context.getState(State::Forces | State::Energy);
     ASSERT_EQUAL_TOL(2*2.5*2.5, state.getPotentialEnergy(), TOL);
@@ -238,11 +223,7 @@ void testCustomWeights() {
     weights[0] = 2.0;
     weights[1] = 1.0;
     force->addGroup(particles, weights);
-    vector<int> groups;
-    groups.push_back(0);
-    groups.push_back(1);
-    vector<double> parameters;
-    force->addBond(groups, parameters);
+    force->addBond({0, 1});
     system.addForce(force);
 
     // The center of mass of group 0 is (0, 1, 0).
@@ -274,14 +255,9 @@ void testIllegalVariable() {
     system.addParticle(1.0);
     system.addParticle(1.0);
     CustomCentroidBondForce* force = new CustomCentroidBondForce(2, "1+none");
-    vector<int> particles;
-    particles.push_back(0);
-    force->addGroup(particles);
-    force->addGroup(particles);
-    vector<int> groups;
-    groups.push_back(0);
-    groups.push_back(1);
-    force->addBond(groups);
+    force->addGroup({0});
+    force->addGroup({0});
+    force->addBond({0, 1});
     system.addForce(force);
     VerletIntegrator integrator(0.001);
     bool threwException = false;
@@ -311,21 +287,9 @@ void testPeriodic(bool byGroups) {
         expression = "k*pointdistance(x1,y1,z1,x2,y2,z2)^2";
     CustomCentroidBondForce* force = new CustomCentroidBondForce(2, expression);
     force->addPerBondParameter("k");
-    vector<int> particles1;
-    particles1.push_back(0);
-    particles1.push_back(1);
-    vector<int> particles2;
-    particles2.push_back(2);
-    particles2.push_back(3);
-    particles2.push_back(4);
-    force->addGroup(particles1);
-    force->addGroup(particles2);
-    vector<int> groups;
-    groups.push_back(0);
-    groups.push_back(1);
-    vector<double> parameters;
-    parameters.push_back(1.0);
-    force->addBond(groups, parameters);
+    force->addGroup({0, 1});
+    force->addGroup({2, 3, 4});
+    force->addBond({0, 1}, {1.0});
     force->setUsesPeriodicBoundaryConditions(true);
     system.addForce(force);
 
@@ -367,20 +331,9 @@ void testEnergyParameterDerivatives() {
     force->addGlobalParameter("k", 0.0);
     force->addEnergyParameterDerivative("r0");
     force->addEnergyParameterDerivative("k");
-    vector<int> particles1;
-    particles1.push_back(0);
-    particles1.push_back(1);
-    vector<int> particles2;
-    particles2.push_back(2);
-    particles2.push_back(3);
-    particles2.push_back(4);
-    force->addGroup(particles1);
-    force->addGroup(particles2);
-    vector<int> groups;
-    groups.push_back(0);
-    groups.push_back(1);
-    vector<double> parameters;
-    force->addBond(groups, parameters);
+    force->addGroup({0, 1});
+    force->addGroup({2, 3, 4});
+    force->addBond({0, 1});
     system.addForce(force);
 
     // The center of mass of group 0 is (1.5, 0, 0).

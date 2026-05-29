@@ -6,6 +6,8 @@ from openmm.unit import *
 import openmm.app.element as elem
 import openmm.app.forcefield as forcefield
 import math
+import shutil
+import tempfile
 import textwrap
 try:
     from cStringIO import StringIO
@@ -203,6 +205,132 @@ class TestForceField(unittest.TestCase):
         # Make sure flexibleConstraints yields just as many angles as no constraints
         self.assertEqual(af2.getNumAngles(), af3.getNumAngles())
 
+    def testTemplateConstraints(self):
+        """Test constraints defined by a residue template."""
+        xml = """
+<ForceField>
+ <AtomTypes>
+  <Type name="C" class="C" element="C" mass="12.01078"/>
+  <Type name="O" class="O" element="O" mass="15.99943"/>
+  <Type name="H" class="H" element="H" mass="1.007947"/>
+  <Type name="Na+" class="Na+" element="Na" mass="22.99"/>
+  <Type name="Cl-" class="Cl-" element="Cl" mass="35.45"/>
+ </AtomTypes>
+ <Residues>
+  <Residue name="MEOH">
+   <Atom name="CB" type="C"/>
+   <Atom name="OG" type="O"/>
+   <Atom name="HG" type="H"/>
+   <Atom name="HB1" type="H"/>
+   <Atom name="HB2" type="H"/>
+   <Atom name="HB3" type="H"/>
+   <Bond atomName1="CB" atomName2="OG"/>
+   <Bond atomName1="CB" atomName2="HB1"/>
+   <Bond atomName1="CB" atomName2="HB2"/>
+   <Bond atomName1="CB" atomName2="HB3"/>
+   <Bond atomName1="OG" atomName2="HG"/>
+   <Constraint atomName1="CB" atomName2="OG" distance="1.987"/>
+   <Constraint atomName1="OG" atomName2="HG" distance="1.123"/>
+  </Residue>
+  <Residue name="NA">
+    <Atom name="NA" type="Na+"/>
+  </Residue>
+  <Residue name="CL">
+    <Atom name="CL" type="Cl-"/>
+  </Residue>
+ </Residues>
+ <HarmonicBondForce>
+  <Bond class1="C" class2="O" k="100.0" length="2.0"/>
+  <Bond class1="C" class2="H" k="100.0" length="1.0"/>
+  <Bond class1="O" class2="H" k="100.0" length="1.1"/>
+ </HarmonicBondForce>
+</ForceField>"""
+        ff = ForceField(StringIO(xml))
+        pdb = PDBFile('systems/methanol_ions.pdb')
+        expected = {None:2, HBonds:5, AllBonds:5}
+        for constraints in [None, HBonds, AllBonds]:
+            system = ff.createSystem(pdb.topology, constraints=constraints)
+            self.assertEqual(expected[constraints], system.getNumConstraints())
+            lengths = {}
+            for i in range(system.getNumConstraints()):
+                p1, p2, length = system.getConstraintParameters(i)
+                lengths[(min(p1, p2), max(p1, p2))] = length.value_in_unit(nanometer)
+            self.assertEqual(1.987, lengths[(0, 1)])
+            self.assertEqual(1.123, lengths[(1, 2)])
+            if constraints is not None:
+                self.assertEqual(1.0, lengths[(0, 3)])
+                self.assertEqual(1.0, lengths[(0, 4)])
+                self.assertEqual(1.0, lengths[(0, 5)])
+
+    def testTemplateConstraintsMultipleMols(self):
+        """Test that constraints defined by a residue template don't leak into
+        other residues.
+        See https://github.com/openmm/openmm/issues/5234
+        """
+        MOL_A = """<ForceField>
+ <AtomTypes>
+  <Type name="A0" mass="12" class="A0" element="C"/>
+  <Type name="A1" mass="12" class="A1" element="C"/>
+ </AtomTypes>
+ <HarmonicBondForce>
+  <Bond class1="A0" class2="A1" length="0.15" k="200000"/>
+ </HarmonicBondForce>
+ <NonbondedForce coulomb14scale="1" lj14scale="1">
+  <Atom class="A0" sigma="0.3" epsilon="0.1" charge="0"/>
+  <Atom class="A1" sigma="0.3" epsilon="0.1" charge="0"/>
+ </NonbondedForce>
+ <Residues>
+  <Residue name="MOLA">
+   <Atom name="a0" type="A0"/><Atom name="a1" type="A1"/>
+   <Bond atomName1="a0" atomName2="a1"/>
+  </Residue>
+ </Residues>
+</ForceField>"""
+
+        MOL_B = """<ForceField>
+ <AtomTypes>
+  <Type name="B0" mass="12" class="B0" element="C"/>
+  <Type name="B1" mass="1" class="B1" element="H"/>
+ </AtomTypes>
+ <HarmonicBondForce>
+  <Bond class1="B0" class2="B1" length="0.11" k="300000"/>
+ </HarmonicBondForce>
+ <NonbondedForce coulomb14scale="1" lj14scale="1">
+  <Atom class="B0" sigma="0.3" epsilon="0.1" charge="0"/>
+  <Atom class="B1" sigma="0.1" epsilon="0.01" charge="0"/>
+ </NonbondedForce>
+ <Residues>
+  <Residue name="MOLB">
+   <Atom name="b0" type="B0"/><Atom name="b1" type="B1"/>
+   <Bond atomName1="b0" atomName2="b1"/>
+   <Constraint atomName1="b0" atomName2="b1" distance="0.11"/>
+  </Residue>
+ </Residues>
+</ForceField>"""
+
+        top = Topology()
+        c = top.addChain()
+        C, H = Element.getBySymbol('C'), Element.getBySymbol('H')
+        r1 = top.addResidue('MOLA', c)
+        a0, a1 = top.addAtom('a0', C, r1), top.addAtom('a1', C, r1)
+        top.addBond(a0, a1)
+        r2 = top.addResidue('MOLB', c)
+        b0, b1 = top.addAtom('b0', C, r2), top.addAtom('b1', H, r2)
+        top.addBond(b0, b1)
+
+        ff = ForceField()
+        ff.loadFile(StringIO(MOL_A))
+        ff.loadFile(StringIO(MOL_B))
+        sys = ff.createSystem(top,
+                              nonbondedMethod=NoCutoff,
+                              constraints=None)
+
+        self.assertEqual(sys.getNumConstraints(), 1)
+        constraintParameters = sys.getConstraintParameters(0)
+        self.assertEqual(constraintParameters[0], 2)
+        self.assertEqual(constraintParameters[1], 3)
+        self.assertEqual(constraintParameters[2], 0.11 * nanometer)
+
     def test_ImplicitSolvent(self):
         """Test the four types of implicit solvents using the implicitSolvent
         parameter.
@@ -235,6 +363,36 @@ class TestForceField(unittest.TestCase):
                 self.assertEqual(force.getReactionFieldDielectric(), 1.0)
         self.assertTrue(found_matching_solvent_dielectric and
                         found_matching_solute_dielectric)
+
+    def test_LCPO(self):
+        """Check LCPO parameter assignment vs. the Amber implementation."""
+
+        prmtop = AmberPrmtopFile('systems/lcpo_test.prmtop')
+        pdb = PDBFile('systems/lcpo_test.pdb')
+        system1 = prmtop.createSystem(implicitSolvent=GBn2, sasaMethod='LCPO')
+        system2 = ForceField('amber14-all.xml', 'implicit/gbn2.xml').createSystem(pdb.topology, sasaMethod='LCPO')
+        lcpo1, = (force for force in system1.getForces() if isinstance(force, LCPOForce))
+        lcpo2, = (force for force in system2.getForces() if isinstance(force, LCPOForce))
+        self.assertEqual(XmlSerializer.serialize(lcpo1), XmlSerializer.serialize(lcpo2))
+
+    def test_LCPOInvalid(self):
+        """Check that LCPO parameter assignment fails instead of assigning incorrect parameters for unsupported atom types."""
+
+        # Build a water molecule.
+        topology = Topology()
+        chain = topology.addChain()
+        residue = topology.addResidue("HOH", chain)
+        o = topology.addAtom("O", elem.oxygen, residue)
+        h1 = topology.addAtom("H1", elem.hydrogen, residue)
+        h2 = topology.addAtom("H2", elem.hydrogen, residue)
+        topology.addBond(o, h1)
+        topology.addBond(o, h2)
+
+        # Water should be matched correctly but there are no LCPO parameters for
+        # O bonded to two H atoms, so an exception should be raised.
+        ff = ForceField('amber14-all.xml', 'amber14/opc3.xml', 'implicit/gbn2.xml')
+        with self.assertRaisesRegex(ValueError, 'atomic number 8.+2 bonds.+0 bonds excluding H'):
+            ff.createSystem(topology, sasaMethod='LCPO')
 
     def test_HydrogenMass(self):
         """Test that altering the mass of hydrogens works correctly."""
@@ -290,7 +448,7 @@ class TestForceField(unittest.TestCase):
         # Specifying a non-default value should.
         with self.assertRaises(ValueError):
             self.forcefield1.createSystem(topology, drudeMass=0.5*amu)
-        # Specifying a nonexistant argument should raise an exception.
+        # Specifying a nonexistent argument should raise an exception.
         with self.assertRaises(ValueError):
             self.forcefield1.createSystem(topology, nonbndedCutoff=1.0*nanometer)
 
@@ -378,6 +536,156 @@ class TestForceField(unittest.TestCase):
         for i in range(3):
             self.assertEqual(vectors[i], self.pdb1.topology.getPeriodicBoxVectors()[i])
             self.assertEqual(vectors[i], system.getDefaultPeriodicBoxVectors()[i])
+
+    def test_duplicateAtomTypeAllowed(self):
+        """Test that multiple registrations of the same atom type with identical definitions are allowed."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        ff = ForceField(StringIO(xml1), StringIO(xml2))
+
+        self.assertTrue("test-name" in ff._atomTypes)
+        at = ff._atomTypes["test-name"]
+        self.assertEqual(at.atomClass, "test")
+        self.assertEqual(at.element, elem.hydrogen)
+        self.assertEqual(at.mass, 1.007947)
+
+    def test_duplicateAtomTypeAllowedNoElement(self):
+        """Test that multiple registrations of the same atom type with identical definitions and without elements are allowed."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" mass="0.0"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" mass="0.0"/>
+ </AtomTypes>
+</ForceField>"""
+
+        ff = ForceField(StringIO(xml1), StringIO(xml2))
+
+        self.assertTrue("test-name" in ff._atomTypes)
+        at = ff._atomTypes["test-name"]
+        self.assertEqual(at.atomClass, "test")
+        self.assertEqual(at.element, None)
+        self.assertEqual(at.mass, 0.0)
+
+    def test_duplicateAtomTypeForbiddenClass(self):
+        """Test that multiple registrations of the same atom type with different classes are forbidden."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test-1" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test-2" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        with self.assertRaises(ValueError):
+            ff = ForceField(StringIO(xml1), StringIO(xml2))
+
+    def test_duplicateAtomTypeForbiddenElement(self):
+        """Test that multiple registrations of the same atom type with different elements are forbidden."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="C" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        with self.assertRaises(ValueError):
+            ff = ForceField(StringIO(xml1), StringIO(xml2))
+
+    def test_duplicateAtomTypeForbiddenElementAdded(self):
+        """Test that multiple registrations of the same atom type, the first without and the second with an element, are forbidden."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        with self.assertRaises(ValueError):
+            ff = ForceField(StringIO(xml1), StringIO(xml2))
+
+    def test_duplicateAtomTypeForbiddenElementRemoved(self):
+        """Test that multiple registrations of the same atom type, the first with and the second without an element, are forbidden."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        with self.assertRaises(ValueError):
+            ff = ForceField(StringIO(xml1), StringIO(xml2))
+
+    def test_duplicateAtomTypeForbiddenMass(self):
+        """Test that multiple registrations of the same atom type with different masses are forbidden."""
+
+        xml1 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="1.007947"/>
+ </AtomTypes>
+</ForceField>"""
+
+        xml2 = """
+<ForceField>
+ <AtomTypes>
+  <Type name="test-name" class="test" element="H" mass="12.01078"/>
+ </AtomTypes>
+</ForceField>"""
+
+        with self.assertRaises(ValueError):
+            ff = ForceField(StringIO(xml1), StringIO(xml2))
 
     def test_ResidueAttributes(self):
         """Test a ForceField that gets per-particle parameters from residue attributes."""
@@ -652,6 +960,9 @@ class TestForceField(unittest.TestCase):
         forcefield = ForceField('amber99sb.xml', 'tip3p.xml', StringIO(simple_ffxml_contents))
         # Get list of unique unmatched residues.
         [templates, residues] = forcefield.generateTemplatesForUnmatchedResidues(pdb.topology)
+        # Make sure template atom parameter dictionaries are distinct objects.
+        parameters = [atom.parameters for template in templates for atom in template.atoms]
+        self.assertEqual(len(set(map(id, parameters))), len(parameters))
         # Add residue templates to forcefield.
         for template in templates:
             # Replace atom types.
@@ -678,6 +989,174 @@ class TestForceField(unittest.TestCase):
         self.assertEqual(templates[0].name, 'NALA')
         self.assertEqual(templates[1].name, 'ALA')
         self.assertEqual(templates[2].name, 'CALA')
+
+    def test_matchErrorMessages(self):
+        """Test match error detection and diagnostics"""
+
+        # Load a force field to test with and prepare some lines with which to build topologies from PDB files.
+        forcefield = ForceField('amber14-all.xml', 'amber14/opc.xml')
+        pdbLines = [
+            'ATOM      0 CH3  ACE A   1       0       0       0                           C',
+            'ATOM      1 HH31 ACE A   1       0       0       0                           H',
+            'ATOM      2 HH32 ACE A   1       0       0       0                           H',
+            'ATOM      3 HH33 ACE A   1       0       0       0                           H',
+            'ATOM      4 C    ACE A   1       0       0       0                           C',
+            'ATOM      5 O    ACE A   1       0       0       0                           O',
+            'ATOM      6 N    GLY A   2       0       0       0                           N',
+            'ATOM      7 H    GLY A   2       0       0       0                           H',
+            'ATOM      8 CA   GLY A   2       0       0       0                           C',
+            'ATOM      9 HA2  GLY A   2       0       0       0                           H',
+            'ATOM     10 HA3  GLY A   2       0       0       0                           H',
+            'ATOM     11 C    GLY A   2       0       0       0                           C',
+            'ATOM     12 O    GLY A   2       0       0       0                           O',
+            'ATOM     13 N    NME A   3       0       0       0                           N',
+            'ATOM     14 H    NME A   3       0       0       0                           H',
+            'ATOM     15 CH3  NME A   3       0       0       0                           C',
+            'ATOM     16 HH31 NME A   3       0       0       0                           H',
+            'ATOM     17 HH32 NME A   3       0       0       0                           H',
+            'ATOM     18 HH33 NME A   3       0       0       0                           H',
+        ]
+
+        def makeSystem(lines):
+            return forcefield.createSystem(PDBFile(StringIO("\n".join(lines))).topology)
+
+        # This should succeed and not produce any match errors.
+        self.assertEqual(makeSystem(pdbLines).getNumParticles(), 19)
+
+        # Add an He atom and B atoms atom to GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The residue contains He atoms and B atoms, which are not supported by any template in the force field'):
+            makeSystem(pdbLines[:9] + [
+                'ATOM     19 X1   GLY A   2       0       0       0                          He',
+                'ATOM     20 X2   GLY A   2       0       0       0                           B',
+                'ATOM     21 X3   GLY A   2       0       0       0                           B',
+            ] + pdbLines[9:])
+
+        # Delete CA atom from GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of atoms is similar to GLY, but is missing 1 C atom'):
+            makeSystem(pdbLines[:8] + pdbLines[9:])
+
+        # Add an F atom to GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of atoms is similar to GLY, but has 1 F atom too many'):
+            makeSystem(pdbLines[:9] + [
+                'ATOM     19 X1   GLY A   2       0       0       0                           F',
+            ] + pdbLines[9:])
+
+        # Delete CA atom from GLY and add an F atom.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of atoms is similar to GLY, but is missing 1 C atom and has 1 F atom too many'):
+            makeSystem(pdbLines[:8] + [
+                'ATOM     19 X1   GLY A   2       0       0       0                           F',
+            ] + pdbLines[9:])
+
+        # Add 1 F atom, 2 Cl atoms, and 1 Br atom to GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of atoms is similar to GLY, but has 1 F atom, 2 Cl atoms, and 1 Br atom too many'):
+            makeSystem(pdbLines[:9] + [
+                'ATOM     19 X1   GLY A   2       0       0       0                           F',
+                'ATOM     20 X2   GLY A   2       0       0       0                          Cl',
+                'ATOM     21 X3   GLY A   2       0       0       0                          Cl',
+                'ATOM     22 X4   GLY A   2       0       0       0                          Br',
+            ] + pdbLines[9:])
+
+        # Add a virtual site to GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of heavy atoms matches GLY, but the residue has 1 extra site too many'):
+            makeSystem(pdbLines[:9] + [
+                'ATOM     19 X1   GLY A   2       0       0       0                          EP',
+            ] + pdbLines[9:])
+
+        # Delete HA3 atom from GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of heavy atoms matches GLY, but the residue is missing 1 H atom.*You may be able to add it with.*addHydrogens'):
+            makeSystem(pdbLines[:10] + pdbLines[11:])
+
+        # Delete HA2 and HA3 atoms from GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of heavy atoms matches GLY, but the residue is missing 2 H atoms.*You may be able to add them with.*addHydrogens'):
+            makeSystem(pdbLines[:9] + pdbLines[11:])
+
+        # Delete HA3 atom from GLY and add a virtual site.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of heavy atoms matches GLY, but the residue is missing 1 H atom and has 1 extra site too many'):
+            makeSystem(pdbLines[:10] + [
+                'ATOM     19 X1   GLY A   2       0       0       0                          EP',
+            ] + pdbLines[11:])
+
+        # Rename HA3 atom to remove the CA-HA3 bond.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of atoms matches GLY, but the residue is missing 1 H-C bond'):
+            makeSystem(pdbLines[:10] + [
+                'ATOM     10 X1   GLY A   2       0       0       0                           H',
+            ] + pdbLines[11:])
+
+        # Add an extra N-O bond.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The set of atoms matches GLY, but the residue has 1 N-O bond too many'):
+            makeSystem(pdbLines + [
+                'CONECT    6   12'
+            ])
+
+        # Remove an external bond to NME by renaming its N atom.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The atoms and bonds in the residue match GLY, but the set of externally bonded atoms is missing 1 C atom'):
+            makeSystem(pdbLines[:13] + [
+                'ATOM     13 X1   NME A   3       0       0       0                           N',
+            ] + pdbLines[14:])
+
+        # Add an extra external bond to NME.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The atoms and bonds in the residue match GLY, but the set of externally bonded atoms has 1 O atom too many'):
+            makeSystem(pdbLines + [
+                'CONECT   12   15'
+            ])
+
+        # Delete ACE so that a capping group is missing from GLY.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The atoms and bonds in the residue match GLY, but the set of externally bonded atoms is missing 1 N atom.*Is the chain missing a terminal capping group?'):
+            makeSystem(pdbLines[6:])
+
+        # Keep the atom/bond element fingerprint the same but change the connectivity.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*GLY.*The atoms and bonds in the residue match GLY, but the connectivity is different'):
+            # Rename O to break the C=O bond, but then reattach the O to the CA.
+            makeSystem(pdbLines[:12] + [
+                'ATOM     12 X1   GLY A   2       0       0       0                           O',
+            ] + pdbLines[13:] + [
+                'CONECT    8   12'
+            ])
+
+        # Make water with incorrect atom names so bonds will be missing.
+        pdbLines = [
+            'ATOM      0 X1   HOH A   1       0       0       0                           O',
+            'ATOM      1 X2   HOH A   1       0       0       0                           H',
+            'ATOM      2 X3   HOH A   1       0       0       0                           H',
+        ]
+
+        # Check for a special message when all bonds are missing.
+        forcefield = ForceField('opc3.xml')
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*HOH.*The set of atoms matches HOH, but the residue has no bonds between its atoms'):
+            makeSystem(pdbLines)
+
+        # Add a site to a residue with a force field that doesn't support sites.
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*HOH.*The residue contains extra sites, which are not supported by any template in the force field'):
+            makeSystem(pdbLines + [
+                'ATOM      3 X4   HOH A   1       0       0       0                          EP',
+            ])
+
+        # Load a force field so that 1 site will be missing.
+        forcefield = ForceField('opc.xml')
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*HOH.*The set of heavy atoms matches HOH, but the residue is missing 1 extra site.*You may be able to add it with.*addExtraParticles'):
+            makeSystem(pdbLines)
+
+        # Load a force field so that 2 sites will be missing.
+        forcefield = ForceField('tip5p.xml')
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*HOH.*The set of heavy atoms matches HOH, but the residue is missing 2 extra sites.*You may be able to add them with.*addExtraParticles'):
+            makeSystem(pdbLines)
+
+        # Use an empty force field so that there are no templates.
+        forcefield = ForceField()
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*HOH.*The force field contains no residue templates'):
+            makeSystem(pdbLines)
+
+        # Make water with an extra site and an (invalid) bond to it.
+        pdbLines = [
+            'ATOM      0 O    HOH A   1       0       0       0                           O',
+            'ATOM      1 H1   HOH A   1       0       0       0                           H',
+            'ATOM      2 H2   HOH A   1       0       0       0                           H',
+            'ATOM      3 M    HOH A   1       0       0       0                          EP',
+            'CONECT    0    3'
+        ]
+        forcefield = ForceField('opc.xml')
+        with self.assertRaisesRegex(ValueError, 'No template found for residue.*HOH.*The set of atoms matches HOH, but the residue has 1 extra site-O bond too many'):
+            makeSystem(pdbLines)
 
     def test_Wildcard(self):
         """Test that PeriodicTorsionForces using wildcard ('') for atom types / classes in the ffxml are correctly registered"""
@@ -856,6 +1335,100 @@ class TestForceField(unittest.TestCase):
         self.assertEqual(ff._templates['FE2'].atoms[0].type, 'Fe2+_tip3p_standard')
         ff.createSystem(pdb.topology)
 
+    def test_CMAPTorsionGeneratorMapAssignment(self):
+        """Tests assignment of the correct maps when multiple CMAPTorsionGenerators are present"""
+
+        ffxml_1 = """
+<ForceField>
+    <AtomTypes>
+        <Type name="A" class="A" element="C" mass="12" />
+        <Type name="B" class="B" element="N" mass="14" />
+    </AtomTypes>
+    <Residues>
+        <Residue name="X">
+            <Atom name="X1" type="A" />
+            <Atom name="X2" type="A" />
+            <Atom name="X3" type="A" />
+            <Atom name="X4" type="A" />
+            <Atom name="X5" type="B" />
+            <Bond atomName1="X1" atomName2="X2" />
+            <Bond atomName1="X2" atomName2="X3" />
+            <Bond atomName1="X3" atomName2="X4" />
+            <Bond atomName1="X4" atomName2="X5" />
+        </Residue>
+        <Residue name="Y">
+            <Atom name="Y1" type="A" />
+            <Atom name="Y2" type="A" />
+            <Atom name="Y3" type="A" />
+            <Atom name="Y4" type="B" />
+            <Atom name="Y5" type="B" />
+            <Bond atomName1="Y1" atomName2="Y2" />
+            <Bond atomName1="Y2" atomName2="Y3" />
+            <Bond atomName1="Y3" atomName2="Y4" />
+            <Bond atomName1="Y4" atomName2="Y5" />
+        </Residue>
+    </Residues>
+    <CMAPTorsionForce>
+        <Map>10 11 12 13</Map>
+        <Torsion map="0" class1="A" class2="A" class3="A" class4="A" class5="B" />
+    </CMAPTorsionForce>
+</ForceField>
+"""
+
+        ffxml_2 = """
+<ForceField>
+    <CMAPTorsionForce>
+        <Map>14 15 16 17</Map>
+        <Torsion map="0" class1="A" class2="A" class3="A" class4="B" class5="B" />
+    </CMAPTorsionForce>
+</ForceField>
+"""
+
+        ff = ForceField(StringIO(ffxml_1), StringIO(ffxml_2))
+
+        topology = Topology()
+
+        x = topology.addResidue("X", topology.addChain())
+        x1 = topology.addAtom("X1", elem.carbon, x)
+        x2 = topology.addAtom("X2", elem.carbon, x)
+        x3 = topology.addAtom("X3", elem.carbon, x)
+        x4 = topology.addAtom("X4", elem.carbon, x)
+        x5 = topology.addAtom("X5", elem.nitrogen, x)
+        topology.addBond(x1, x2)
+        topology.addBond(x2, x3)
+        topology.addBond(x3, x4)
+        topology.addBond(x4, x5)
+
+        y = topology.addResidue("Y", topology.addChain())
+        y1 = topology.addAtom("Y1", elem.carbon, y)
+        y2 = topology.addAtom("Y2", elem.carbon, y)
+        y3 = topology.addAtom("Y3", elem.carbon, y)
+        y4 = topology.addAtom("Y4", elem.nitrogen, y)
+        y5 = topology.addAtom("Y5", elem.nitrogen, y)
+        topology.addBond(y1, y2)
+        topology.addBond(y2, y3)
+        topology.addBond(y3, y4)
+        topology.addBond(y4, y5)
+
+        system = ff.createSystem(topology)
+        cmap, = (force for force in system.getForces() if isinstance(force, openmm.CMAPTorsionForce))
+
+        torsionCount = cmap.getNumTorsions()
+        assert torsionCount == 2
+
+        for torsionIndex in range(torsionCount):
+            mapIndex, *atomIndices = cmap.getTorsionParameters(torsionIndex)
+            mapSize, energy = cmap.getMapParameters(mapIndex)
+
+            if atomIndices == [0, 1, 2, 3, 1, 2, 3, 4]:
+                expectedEnergy = (10.0, 11.0, 12.0, 13.0) * kilojoule_per_mole
+            elif atomIndices == [5, 6, 7, 8, 6, 7, 8, 9]:
+                expectedEnergy = (14.0, 15.0, 16.0, 17.0) * kilojoule_per_mole
+            else:
+                raise ValueError("unexpected torsion")
+
+            assert energy == expectedEnergy
+
     def test_LennardJonesGenerator(self):
         """ Test the LennardJones generator"""
         warnings.filterwarnings('ignore', category=CharmmPSFWarning)
@@ -912,70 +1485,87 @@ class TestForceField(unittest.TestCase):
         ene2 = state2.getPotentialEnergy().value_in_unit(kilocalories_per_mole)
         self.assertAlmostEqual(ene, ene2)
 
+        # LJPME should be forbidden with LennardJonesForce since it makes a CustomNonbondedForce to handle NBFix
+        with self.assertRaisesRegex(ValueError, 'LJPME is not supported'):
+            ff.createSystem(pdb.topology, nonbondedMethod=LJPME)
+
     def test_NBFix(self):
         """Test using LennardJonesGenerator to implement NBFix terms."""
-        # Create a chain of five atoms.
+        # Create a chain of seven atoms.
 
         top = Topology()
         chain = top.addChain()
         res = top.addResidue('RES', chain)
-        top.addAtom('A', elem.oxygen, res)
-        top.addAtom('B', elem.carbon, res)
-        top.addAtom('C', elem.carbon, res)
-        top.addAtom('D', elem.carbon, res)
-        top.addAtom('E', elem.nitrogen, res)
+        top.addAtom('A', elem.carbon, res)
+        top.addAtom('B', elem.nitrogen, res)
+        top.addAtom('C', elem.nitrogen, res)
+        top.addAtom('D', elem.oxygen, res)
+        top.addAtom('E', elem.carbon, res)
+        top.addAtom('F', elem.nitrogen, res)
+        top.addAtom('G', elem.oxygen, res)
         atoms = list(top.atoms())
         top.addBond(atoms[0], atoms[1])
         top.addBond(atoms[1], atoms[2])
         top.addBond(atoms[2], atoms[3])
         top.addBond(atoms[3], atoms[4])
+        top.addBond(atoms[4], atoms[5])
+        top.addBond(atoms[5], atoms[6])
 
         # Create the force field and system.
 
         xml = """
 <ForceField>
  <AtomTypes>
-  <Type name="A" class="A" element="O" mass="1"/>
-  <Type name="B" class="B" element="C" mass="1"/>
-  <Type name="C" class="C" element="C" mass="1"/>
-  <Type name="D" class="D" element="C" mass="1"/>
-  <Type name="E" class="E" element="N" mass="1"/>
+  <Type name="A" class="A" element="C" mass="1"/>
+  <Type name="B" class="B" element="N" mass="1"/>
+  <Type name="C" class="C" element="O" mass="1"/>
  </AtomTypes>
  <Residues>
   <Residue name="RES">
    <Atom name="A" type="A"/>
    <Atom name="B" type="B"/>
-   <Atom name="C" type="C"/>
-   <Atom name="D" type="D"/>
-   <Atom name="E" type="E"/>
+   <Atom name="C" type="B"/>
+   <Atom name="D" type="C"/>
+   <Atom name="E" type="A"/>
+   <Atom name="F" type="B"/>
+   <Atom name="G" type="C"/>
    <Bond atomName1="A" atomName2="B"/>
    <Bond atomName1="B" atomName2="C"/>
    <Bond atomName1="C" atomName2="D"/>
    <Bond atomName1="D" atomName2="E"/>
+   <Bond atomName1="E" atomName2="F"/>
+   <Bond atomName1="F" atomName2="G"/>
   </Residue>
  </Residues>
  <LennardJonesForce lj14scale="0.3">
-  <Atom type="A" sigma="1" epsilon="0.1"/>
-  <Atom type="B" sigma="2" epsilon="0.2"/>
-  <Atom type="C" sigma="3" epsilon="0.3"/>
-  <Atom type="D" sigma="4" epsilon="0.4"/>
-  <Atom type="E" sigma="4" epsilon="0.4"/>
-  <NBFixPair type1="A" type2="D" sigma="2.5" epsilon="1.1"/>
-  <NBFixPair type1="A" type2="E" sigma="3.5" epsilon="1.5"/>
+  <Atom type="A" sigma="2.1" epsilon="1.1"/>
+  <Atom type="B" sigma="2.2" epsilon="1.2"/>
+  <Atom type="C" sigma="2.4" epsilon="1.4"/>
+  <NBFixPair type1="C" type2="C" sigma="3.1" epsilon="4.1"/>
+  <NBFixPair type1="A" type2="A" sigma="3.2" epsilon="4.2"/>
+  <NBFixPair type1="B" type2="A" sigma="3.4" epsilon="4.4"/>
  </LennardJonesForce>
 </ForceField> """
         ff = ForceField(StringIO(xml))
         system = ff.createSystem(top)
 
         # Check that it produces the correct energy.
+        # The chain is A-B-B-C-A-B-C, and the pairs that are evaluated are:
+        # A0-C3, A0-A4, A0-B5, A0-C6,
+        # B1-A4, B1-B5, B1-C6,
+        # B2-B5, B2-C6,
+        # C3-C6.
 
         integrator = VerletIntegrator(0.001)
         context = Context(system, integrator, Platform.getPlatform(0))
-        positions = [Vec3(i, 0, 0) for i in range(5)]*nanometers
+        positions = [Vec3(i, 0, 0) for i in range(7)]*nanometers
         context.setPositions(positions)
         def ljEnergy(sigma, epsilon, r):
             return 4*epsilon*((sigma/r)**12-(sigma/r)**6)
-        expected = 0.3*ljEnergy(2.5, 1.1, 3) + 0.3*ljEnergy(3.0, sqrt(0.08), 3) + ljEnergy(3.5, 1.5, 4)
+        expected = 0.3*ljEnergy(2.25, math.sqrt(1.54), 3) + ljEnergy(3.2, 4.2, 4) + ljEnergy(3.4, 4.4, 5) + ljEnergy(2.25, math.sqrt(1.54), 6) \
+                 + 0.3*ljEnergy(3.4, 4.4, 3) + ljEnergy(2.2, 1.2, 4) + ljEnergy(2.3, math.sqrt(1.68), 5) \
+                 + 0.3*ljEnergy(2.2, 1.2, 3) + ljEnergy(2.3, math.sqrt(1.68), 4) \
+                 + 0.3*ljEnergy(3.1, 4.1, 3)
         self.assertAlmostEqual(expected, context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(kilojoules_per_mole))
 
     def test_IgnoreExternalBonds(self):
@@ -996,6 +1586,23 @@ class TestForceField(unittest.TestCase):
         self.assertTrue(len(forcefield._atomTypes) > 10)
         self.assertTrue('spce-O' in forcefield._atomTypes)
         self.assertTrue('HOH' in forcefield._templates)
+
+    def test_IncludesFromDataDirectory(self):
+        """Test relative include paths from subdirectories of the data directory."""
+
+        oldDataDirs = forcefield._dataDirectories
+        try:
+            with tempfile.TemporaryDirectory() as tempDataDir:
+                forcefield._dataDirectories = forcefield._getDataDirectories() + [tempDataDir]
+                os.mkdir(os.path.join(tempDataDir, 'subdir'))
+                for testFileName in ['ff_with_includes.xml', 'test_amber_ff.xml']:
+                    shutil.copyfile(os.path.join('systems', testFileName), os.path.join(tempDataDir, 'subdir', testFileName))
+                ff = ForceField(os.path.join('subdir', 'ff_with_includes.xml'))
+                self.assertTrue(len(ff._atomTypes) > 10)
+                self.assertTrue('spce-O' in ff._atomTypes)
+                self.assertTrue('HOH' in ff._templates)
+        finally:
+            forcefield._dataDirectories = oldDataDirs
 
     def test_ImpropersOrdering(self):
         """Test correctness of the ordering of atom indexes in improper torsions
@@ -1079,7 +1686,7 @@ class TestForceField(unittest.TestCase):
     def test_Disulfides(self):
         """Test that various force fields handle disulfides correctly."""
         pdb = PDBFile('systems/bpti.pdb')
-        for ff in ['amber99sb.xml', 'amber14-all.xml', 'charmm36.xml', 'amberfb15.xml', 'amoeba2013.xml']:
+        for ff in ['amber99sb.xml', 'amber14-all.xml', 'amber19-all.xml', 'charmm36.xml', 'charmm36_2024.xml', 'amberfb15.xml', 'amoeba2013.xml']:
             forcefield = ForceField(ff)
             system = forcefield.createSystem(pdb.topology)
 
@@ -1110,6 +1717,66 @@ ATOM     20  OT2 HIS     1A   -0.864     1.172  -1.737  1.00  0.00           O
 END"""))
         # If the check is not done correctly, this will throw an exception.
         ff.createSystem(pdb.topology)
+    
+    def test_CharmmLoad(self):
+        """Tests that the CHARMM force fields are capable of parameterizing systems."""
+
+        charmm_models = ("charmm36", "charmm36_2024")
+        water_models_3 = ("water", "spce", "tip3p-pme-b", "tip3p-pme-f")
+        water_models_4 = ("tip4p2005", "tip4pew")
+        water_models_5 = ("tip5p", "tip5pew")
+
+        # Checks that the numbers of various types of terms in a system matches expected counts.
+        def check_system(system, particle_count, site_count, constraint_count, bond_count, angle_count, cmap_count, exception_count, override_count, drude_count, screen_count):
+            self.assertEqual(particle_count, system.getNumParticles())
+            self.assertEqual(site_count, sum([1 for index in range(system.getNumParticles()) if system.isVirtualSite(index)]))
+            self.assertEqual(constraint_count, system.getNumConstraints())
+            self.assertEqual(bond_count, sum([force.getNumBonds() for force in system.getForces() if isinstance(force, HarmonicBondForce)]))
+            self.assertEqual(angle_count, sum([force.getNumAngles() for force in system.getForces() if isinstance(force, HarmonicAngleForce)]))
+            self.assertEqual(cmap_count, sum([force.getNumTorsions() for force in system.getForces() if isinstance(force, CMAPTorsionForce)]))
+            self.assertEqual(exception_count, sum([force.getNumExceptions() for force in system.getForces() if isinstance(force, NonbondedForce)]))
+            self.assertEqual(override_count, sum([force.getNumBonds() for force in system.getForces() if isinstance(force, CustomBondForce)]))
+            self.assertEqual(drude_count, sum([force.getNumParticles() for force in system.getForces() if isinstance(force, DrudeForce)]))
+            self.assertEqual(screen_count, sum([force.getNumScreenedPairs() for force in system.getForces() if isinstance(force, DrudeForce)]))
+
+        # Standard 20 amino acids including N- and C-terminal variants.
+        pdb_20aa = PDBFile("systems/test_charmm_20aa.pdb")
+        for charmm_model in charmm_models:
+            check_system(ForceField(f"{charmm_model}.xml").createSystem(pdb_20aa.topology), 1032, 0, 0, 1937, 1833, 20, 5390, 2527, 0, 0)
+
+        # Standard 20 amino acids including N- and C-terminal variants (Drude).
+        pdb_20aa_drude = PDBFile("systems/test_charmm_20aa_drude.pdb")
+        for drude_model in ("charmm_polar_2019", "charmm_polar_2023"):
+            check_system(ForceField(f"{drude_model}.xml").createSystem(pdb_20aa_drude.topology), 1794, 241, 0, 2106, 1833, 20, 18162, 7434, 521, 1203)
+
+        # Peptide in water with ions.
+        pdb_peptide_3 = PDBFile("systems/test_charmm_peptide_3.pdb")
+        pdb_peptide_4 = PDBFile("systems/test_charmm_peptide_4.pdb")
+        pdb_peptide_5 = PDBFile("systems/test_charmm_peptide_5.pdb")
+        for charmm_model in charmm_models:
+            for water_model in water_models_3:
+                check_system(ForceField(f"{charmm_model}.xml", f"{charmm_model}/{water_model}.xml").createSystem(pdb_peptide_3.topology), 1136, 0, 984, 234, 249, 8, 1727, 353, 0, 0)
+            for water_model in water_models_4:
+                check_system(ForceField(f"{charmm_model}.xml", f"{charmm_model}/{water_model}.xml").createSystem(pdb_peptide_4.topology), 1464, 328, 984, 234, 249, 8, 2711, 353, 0, 0)
+            for water_model in water_models_5:
+                check_system(ForceField(f"{charmm_model}.xml", f"{charmm_model}/{water_model}.xml").createSystem(pdb_peptide_5.topology), 1792, 656, 984, 234, 249, 8, 4023, 353, 0, 0)
+
+    def test_CharmmVersionMismatchCheck(self):
+        """
+        Tests that CHARMM force fields cannot be loaded with the wrong water model versions.
+        """
+
+        charmm_models = ("charmm36", "charmm36_2024")
+        water_models = ("water", "spce", "tip3p-pme-b", "tip3p-pme-f", "tip4p2005", "tip4pew", "tip5p", "tip5pew")
+
+        for base_charmm_model in charmm_models:
+            for water_charmm_model in charmm_models:
+                if base_charmm_model != water_charmm_model:
+                    for water_model in water_models:
+                        with self.assertRaises(Exception):
+                            ForceField(f"{base_charmm_model}.xml", f"{water_charmm_model}/{water_model}.xml")
+                        with self.assertRaises(Exception):
+                            ForceField(f"{water_charmm_model}/{water_model}.xml", f"{base_charmm_model}.xml")
 
     def test_CharmmPolar(self):
         """Test the CHARMM polarizable force field."""
@@ -1329,6 +1996,111 @@ self.scriptExecuted = True
         self.assertTrue(abs(energy1 - energy_amber) < energy_tolerance)
         self.assertTrue(abs(energy1 - energy2) < energy_tolerance)
 
+    def testWholeMolecule(self):
+        """Test matching a template to a whole molecule."""
+        xml = """
+<ForceField>
+  <AtomTypes>
+    <Type class="C" element="C" mass="12.01" name="C" />
+    <Type class="CT" element="C" mass="12.01" name="CT" />
+    <Type class="CX" element="C" mass="12.01" name="CX"/>
+    <Type class="H" element="H" mass="1.008" name="H"/>
+    <Type class="HC" element="H" mass="1.008" name="HC" />
+    <Type class="H1" element="H" mass="1.008" name="H1" />
+    <Type class="N" element="N" mass="14.01" name="N" />
+    <Type class="O" element="O" mass="16.0" name="O" />
+  </AtomTypes>
+  <Residues>
+    <Residue name="Alanine-Dipeptide">
+      <Atom charge="0.1123" name="ACE-H1" type="HC" />
+      <Atom charge="-0.3662" name="ACE-CH3" type="CT" />
+      <Atom charge="0.1123" name="ACE-H2" type="HC" />
+      <Atom charge="0.1123" name="ACE-H3" type="HC" />
+      <Atom charge="0.5972" name="ACE-C" type="C" />
+      <Atom charge="-0.5679" name="ACE-O" type="O" />
+      <Bond atomName1="ACE-H1" atomName2="ACE-CH3" />
+      <Bond atomName1="ACE-CH3" atomName2="ACE-H2" />
+      <Bond atomName1="ACE-CH3" atomName2="ACE-H3" />
+      <Bond atomName1="ACE-CH3" atomName2="ACE-C" />
+      <Bond atomName1="ACE-C" atomName2="ACE-O" />
+      <Atom charge="-0.4157" name="ALA-N" type="N" />
+      <Atom charge="0.2719" name="ALA-H" type="H" />
+      <Atom charge="0.0337" name="ALA-CA" type="CX" />
+      <Atom charge="0.0823" name="ALA-HA" type="H1" />
+      <Atom charge="-0.1825" name="ALA-CB" type="CT" />
+      <Atom charge="0.0603" name="ALA-HB1" type="HC" />
+      <Atom charge="0.0603" name="ALA-HB2" type="HC" />
+      <Atom charge="0.0603" name="ALA-HB3" type="HC" />
+      <Atom charge="0.5973" name="ALA-C" type="C" />
+      <Atom charge="-0.5679" name="ALA-O" type="O" />
+      <Bond atomName1="ALA-N" atomName2="ALA-H" />
+      <Bond atomName1="ALA-N" atomName2="ALA-CA" />
+      <Bond atomName1="ALA-CA" atomName2="ALA-HA" />
+      <Bond atomName1="ALA-CA" atomName2="ALA-CB" />
+      <Bond atomName1="ALA-CA" atomName2="ALA-C" />
+      <Bond atomName1="ALA-CB" atomName2="ALA-HB1" />
+      <Bond atomName1="ALA-CB" atomName2="ALA-HB2" />
+      <Bond atomName1="ALA-CB" atomName2="ALA-HB3" />
+      <Bond atomName1="ALA-C" atomName2="ALA-O" />
+      <Atom charge="-0.4157" name="NME-N" type="N" />
+      <Atom charge="0.2719" name="NME-H" type="H" />
+      <Atom charge="-0.149" name="NME-C" type="CT" />
+      <Atom charge="0.0976" name="NME-H1" type="H1" />
+      <Atom charge="0.0976" name="NME-H2" type="H1" />
+      <Atom charge="0.0976" name="NME-H3" type="H1" />
+      <Bond atomName1="NME-N" atomName2="NME-H" />
+      <Bond atomName1="NME-N" atomName2="NME-C" />
+      <Bond atomName1="NME-C" atomName2="NME-H1" />
+      <Bond atomName1="NME-C" atomName2="NME-H2" />
+      <Bond atomName1="NME-C" atomName2="NME-H3" />
+      <Bond atomName1="ACE-C" atomName2="ALA-N" />
+      <Bond atomName1="ALA-C" atomName2="NME-N" />
+    </Residue>
+    <!-- A template that matches just the ACE with different parameters -->
+    <Residue name="ACE">
+      <Atom charge="0.1123" name="ACE-H1" type="HC" />
+      <Atom charge="-0.3662" name="ACE-CH3" type="CT" />
+      <Atom charge="-10.0" name="ACE-H2" type="HC" />
+      <Atom charge="0.1123" name="ACE-H3" type="HC" />
+      <Atom charge="10.0" name="ACE-C" type="C" />
+      <Atom charge="-0.5679" name="ACE-O" type="O" />
+      <Bond atomName1="ACE-H1" atomName2="ACE-CH3" />
+      <Bond atomName1="ACE-CH3" atomName2="ACE-H2" />
+      <Bond atomName1="ACE-CH3" atomName2="ACE-H3" />
+      <Bond atomName1="ACE-CH3" atomName2="ACE-C" />
+      <Bond atomName1="ACE-C" atomName2="ACE-O" />
+      <ExternalBond atomName="ACE-C" />
+    </Residue>
+  </Residues>
+  <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+    <UseAttributeFromResidue name="charge"/>
+    <Atom epsilon="0.359824" sigma="0.3399669508423535" type="C"/>
+    <Atom epsilon="0.4577296" sigma="0.3399669508423535" type="CT"/>
+    <Atom epsilon="0.4577296" sigma="0.3399669508423535" type="CX"/>
+    <Atom epsilon="0.06568879999999999" sigma="0.2649532787749369" type="HC"/>
+    <Atom epsilon="0.06568879999999999" sigma="0.10690784617684071" type="H"/>
+    <Atom epsilon="0.06568879999999999" sigma="0.2471353044121301" type="H1"/>
+    <Atom epsilon="0.7112800000000001" sigma="0.3249998523775958" type="N"/>
+    <Atom epsilon="0.87864" sigma="0.2959921901149463" type="O"/>
+  </NonbondedForce>
+</ForceField>"""
+        pdb = PDBFile('systems/alanine-dipeptide-implicit.pdb')
+        ff = ForceField(StringIO(xml))
+        system = ff.createSystem(pdb.topology)
+        nonbonded = next(f for f in system.getForces() if isinstance(f, NonbondedForce))
+
+        def checkAtom(resName, atomName, expected):
+            for atom in pdb.topology.atoms():
+                if atom.name == atomName and atom.residue.name == resName:
+                    params = nonbonded.getParticleParameters(atom.index)
+                    self.assertEqual(expected, params)
+                    return
+            raise ValueError(f'{resName} {atomName} not found')
+
+        checkAtom('ACE', 'C', [0.5972*elementary_charge, 0.3399669508423535*nanometers, 0.359824*kilojoules_per_mole])
+        checkAtom('ACE', 'H2', [0.1123*elementary_charge, 0.2649532787749369*nanometers, 0.06568879999999999*kilojoules_per_mole])
+        checkAtom('ALA', 'CA', [0.0337*elementary_charge, 0.3399669508423535*nanometers, 0.4577296*kilojoules_per_mole])
+        checkAtom('NME', 'N', [-0.4157*elementary_charge, 0.3249998523775958*nanometers, 0.7112800000000001*kilojoules_per_mole])
 
 class AmoebaTestForceField(unittest.TestCase):
     """Test the ForceField.createSystem() method with the AMOEBA forcefield."""
@@ -1442,21 +2214,38 @@ class AmoebaTestForceField(unittest.TestCase):
         return energies
 
     def test_Amoeba18BPTI(self):
-        """Test that AMOEBA18 computes energies correctly for BPTI."""
+        """
+        Test that AMOEBA18 computes energies correctly for BPTI.
+        
+        Total Potential Energy :               -259.8636 Kcal/mole
+
+        Energy Component Breakdown :           Kcal/mole        Interactions
+
+        Bond Stretching                         290.2445              906
+        Angle Bending                           496.4300             1626
+        Stretch-Bend                              5.7695             1455
+        Out-of-Plane Bend                        51.2913              597
+        Torsional Angle                          75.6890             2391
+        Pi-Orbital Torsion                       19.3364              109
+        Torsion-Torsion                         -32.6689                6
+        Van der Waals                           383.8705           394854
+        Atomic Multipoles                     -1325.1825           394854
+        Polarization                           -224.6434           394854
+        """
         energies = self.computeAmoeba18Energies('systems/bpti.pdb')
 
         # Compare to values computed with Tinker.
 
-        self.assertAlmostEqual(290.2445, energies['AmoebaBond'], 4)
-        self.assertAlmostEqual(496.4300, energies['AmoebaAngle']+energies['AmoebaInPlaneAngle'], 4)
-        self.assertAlmostEqual(51.2913, energies['AmoebaOutOfPlaneBend'], 4)
-        self.assertAlmostEqual(5.7695, energies['AmoebaStretchBend'], 4)
+        self.assertAlmostEqual(290.2445, energies['AmoebaBondForce'], 4)
+        self.assertAlmostEqual(496.4300, energies['AmoebaAngleForce']+energies['AmoebaInPlaneAngleForce'], 4)
+        self.assertAlmostEqual(51.2913, energies['AmoebaOutOfPlaneBendForce'], 4)
+        self.assertAlmostEqual(5.7695, energies['AmoebaStretchBendForce'], 4)
         self.assertAlmostEqual(75.6890, energies['PeriodicTorsionForce'], 4)
-        self.assertAlmostEqual(19.3364, energies['AmoebaPiTorsion'], 4)
+        self.assertAlmostEqual(19.3364, energies['AmoebaPiTorsionForce'], 4)
         self.assertAlmostEqual(-32.6689, energies['AmoebaTorsionTorsionForce'], 4)
         self.assertAlmostEqual(383.8705, energies['AmoebaVdwForce'], 4)
-        self.assertAlmostEqual(-1323.5640-225.3660, energies['AmoebaMultipoleForce'], 2)
-        self.assertAlmostEqual(-258.9676, sum(list(energies.values())), 2)
+        self.assertAlmostEqual(-1325.1825-224.6434, energies['AmoebaMultipoleForce'], 2)
+        self.assertAlmostEqual(-259.8636, sum(list(energies.values())), 2)
 
     def test_Amoeba18Nucleic(self):
         """Test that AMOEBA18 computes energies correctly for DNA and RNA."""
@@ -1464,17 +2253,17 @@ class AmoebaTestForceField(unittest.TestCase):
 
         # Compare to values computed with Tinker.
 
-        self.assertAlmostEqual(749.6953, energies['AmoebaBond'], 4)
-        self.assertAlmostEqual(579.9971, energies['AmoebaAngle']+energies['AmoebaInPlaneAngle'], 4)
-        self.assertAlmostEqual(10.6630, energies['AmoebaOutOfPlaneBend'], 4)
-        self.assertAlmostEqual(5.2225, energies['AmoebaStretchBend'], 4)
+        self.assertAlmostEqual(749.6953, energies['AmoebaBondForce'], 4)
+        self.assertAlmostEqual(579.9971, energies['AmoebaAngleForce']+energies['AmoebaInPlaneAngleForce'], 4)
+        self.assertAlmostEqual(10.6630, energies['AmoebaOutOfPlaneBendForce'], 4)
+        self.assertAlmostEqual(5.2225, energies['AmoebaStretchBendForce'], 4)
         self.assertAlmostEqual(166.7233, energies['PeriodicTorsionForce'], 4)
-        self.assertAlmostEqual(57.2066, energies['AmoebaPiTorsion'], 4)
-        self.assertAlmostEqual(-4.2538, energies['AmoebaStretchTorsion'], 4)
-        self.assertAlmostEqual(-5.0402, energies['AmoebaAngleTorsion'], 4)
+        self.assertAlmostEqual(57.2066, energies['AmoebaPiTorsionForce'], 4)
+        self.assertAlmostEqual(-4.2538, energies['AmoebaStretchTorsionForce'], 4)
+        self.assertAlmostEqual(-5.0402, energies['AmoebaAngleTorsionForce'], 4)
         self.assertAlmostEqual(187.1103, energies['AmoebaVdwForce'], 4)
         self.assertAlmostEqual(1635.1289-236.1484, energies['AmoebaMultipoleForce'], 3)
-        self.assertAlmostEqual(3146.3046, sum(list(energies.values())), 3)
+        self.assertAlmostEqual(3146.3045, sum(list(energies.values())), 3)
 
 if __name__ == '__main__':
     unittest.main()

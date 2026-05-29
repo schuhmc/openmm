@@ -1,12 +1,10 @@
 """
 topology.py: Used for storing topological information about a system.
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
-Portions copyright (c) 2012-2018 Stanford University and the Authors.
+Portions copyright (c) 2012-2026 Stanford University and the Authors.
 Authors: Peter Eastman
 Contributors:
 
@@ -76,6 +74,10 @@ class Topology(object):
     pairs are bonded to each other, and the dimensions of the crystallographic unit cell.
 
     Atom and residue names should follow the PDB 3.0 nomenclature for all molecules for which one exists.
+
+    When a System is constructed from a Topology (for example with ForceField.createSystem()),
+    each atom is converted to a corresponding particle in the System.  The particles are in the
+    same order as the atoms, so an atom's index in the Topology is also the index of its particle.
     """
 
     _standardBonds = {}
@@ -307,6 +309,13 @@ class Topology(object):
 
             Topology.loadBondDefinitions(os.path.join(os.path.dirname(__file__), 'data', 'residues.xml'))
             Topology._hasLoadedStandardBonds = True
+
+        # Record the existing bonds to avoid adding duplicate ones.
+
+        existingBonds = set([(bond[0], bond[1]) for bond in self._bonds])
+
+        # Add the new bonds.
+
         for chain in self._chains:
             # First build a map of atom names to atoms.
 
@@ -342,7 +351,10 @@ class Topology(object):
                             toResidue = i
                             toAtom = bond[1]
                         if fromAtom in atomMaps[fromResidue] and toAtom in atomMaps[toResidue]:
-                            self.addBond(atomMaps[fromResidue][fromAtom], atomMaps[toResidue][toAtom])
+                            atom1 = atomMaps[fromResidue][fromAtom]
+                            atom2 = atomMaps[toResidue][toAtom]
+                            if (atom1, atom2) not in existingBonds and (atom2, atom1) not in existingBonds:
+                                self.addBond(atom1, atom2)
 
     def createDisulfideBonds(self, positions):
         """Identify disulfide bonds based on proximity and add them to the
@@ -507,3 +519,32 @@ class Bond(namedtuple('Bond', ['atom1', 'atom2'])):
             s = "%s, order=%d" % (s, self.order)
         s += ")"
         return s
+
+class MergedResidue(Residue):
+    """A MergedResidue is a pseudo-residue created by merging multiple Residues into a single object.  It is never
+    contained in a Topology, but is sometimes created for use in parameterization and modelling.  A MergedResidue
+    differs from an ordinary Residue in the follow ways.
+
+    1. It contains a list of the Residue objects that were merged to create it.
+    2. It does not own its Atoms.  They are the same objects found in the original Residues.
+    3. Its chain field refers to the Chain containing the first Residue that was merged.  Because a MergedResidue might
+       span multiple chains, it may not be contained entirely in that Chain.
+    4. Its index field is set to -1, since it has no index within the Topology.
+    """
+    def __init__(self, residues: list[Residue]):
+        """Create a MergedResidue by combining a list of Residues."""
+        if len(residues) == 0:
+            raise ValueError('A MergedResidue must contain at least one Residue')
+        for res in residues[1:]:
+            if res.chain.topology != residues[0].chain.topology:
+                raise ValueError('All Residues in a MergedResidue must belong to the same Topology')
+        ## The list of Residues that were merged.
+        self.residues = residues
+        self.name = 'Merged'
+        self.index = -1
+        self.chain = residues[0].chain
+        self.id = None
+        self.insertionCode = ''
+        self._atoms = []
+        for res in residues:
+            self._atoms += res._atoms

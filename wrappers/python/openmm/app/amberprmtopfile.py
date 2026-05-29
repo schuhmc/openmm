@@ -1,12 +1,10 @@
 """
 armberprmtopfile.py: Used for loading AMBER prmtop files.
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
-Portions copyright (c) 2012-2022 Stanford University and the Authors.
+Portions copyright (c) 2012-2025 Stanford University and the Authors.
 Authors: Peter Eastman
 Contributors:
 
@@ -69,6 +67,13 @@ class GBn2(Singleton):
     def __repr__(self):
         return 'GBn2'
 GBn2 = GBn2()
+
+# Placeholder value for implicit solvent surface area model
+
+class Unspecified(Singleton):
+    def __repr__(self):
+        return 'Unspecified'
+Unspecified = Unspecified()
 
 def _strip_optunit(thing, unit):
     """
@@ -182,7 +187,7 @@ class AmberPrmtopFile(object):
                      implicitSolventKappa=None, temperature=298.15*u.kelvin,
                      soluteDielectric=1.0, solventDielectric=78.5,
                      removeCMMotion=True, hydrogenMass=None, ewaldErrorTolerance=0.0005,
-                     switchDistance=0.0*u.nanometer, gbsaModel='ACE'):
+                     switchDistance=0.0*u.nanometer, flexibleConstraints=False, sasaMethod=Unspecified, gbsaModel=Unspecified):
         """Construct an OpenMM System representing the topology described by this
         prmtop file.
 
@@ -230,11 +235,15 @@ class AmberPrmtopFile(object):
             turned on for Lennard-Jones interactions. If the switchDistance is 0
             or evaluates to boolean False, no switching function will be used.
             Values greater than nonbondedCutoff or less than 0 raise ValueError
-        gbsaModel : str='ACE'
+        flexibleConstraints : boolean=False
+            If True, parameters for constrained degrees of freedom will be added to the System
+        sasaMethod : str, optional
             The SA model used to model the nonpolar solvation component of GB
-            implicit solvent models. If GB is active, this must be 'ACE' or None
-            (the latter indicates no SA model will be used). Other values will
-            result in a ValueError
+            implicit solvent models. If GB is active, this must be 'ACE',
+            'LCPO', or None (the latter indicates no SA model will be used).
+            Other values will result in a ValueError.  If unspecified, uses ACE.
+        gbsaModel : str, optional
+            Deprecated.  Use `sasaMethod` instead.
 
         Returns
         -------
@@ -249,7 +258,7 @@ class AmberPrmtopFile(object):
                      ff.LJPME:'LJPME'}
         if nonbondedMethod not in methodMap:
             raise ValueError('Illegal value for nonbonded method')
-        if not self._prmtop.getIfBox() and nonbondedMethod in (ff.CutoffPeriodic, ff.Ewald, ff.PME, ff.LJPME):
+        if self.topology.getPeriodicBoxVectors() is None and nonbondedMethod in (ff.CutoffPeriodic, ff.Ewald, ff.PME, ff.LJPME):
             raise ValueError('Illegal nonbonded method for a non-periodic system')
         constraintMap = {None:None,
                          ff.HBonds:'h-bonds',
@@ -292,11 +301,16 @@ class AmberPrmtopFile(object):
         elif implicitSolvent is None:
             implicitSolventKappa = 0.0
 
+        if sasaMethod is Unspecified and gbsaModel is not Unspecified:
+            sasaMethod = gbsaModel
+        if sasaMethod is Unspecified:
+            sasaMethod = 'ACE'
+
         sys = amber_file_parser.readAmberSystem(self.topology, prmtop_loader=self._prmtop, shake=constraintString,
                         nonbondedCutoff=nonbondedCutoff, nonbondedMethod=methodMap[nonbondedMethod],
-                        flexibleConstraints=False, gbmodel=implicitString, soluteDielectric=soluteDielectric,
+                        flexibleConstraints=flexibleConstraints, gbmodel=implicitString, soluteDielectric=soluteDielectric,
                         solventDielectric=solventDielectric, implicitSolventKappa=implicitSolventKappa,
-                        rigidWater=rigidWater, elements=self.elements, gbsaModel=gbsaModel)
+                        rigidWater=rigidWater, elements=self.elements, sasaMethod=sasaMethod)
 
         if hydrogenMass is not None:
             for atom1, atom2 in self.topology.bonds():

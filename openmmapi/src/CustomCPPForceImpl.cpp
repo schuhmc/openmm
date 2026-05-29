@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2008-2021 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -42,7 +40,7 @@ CustomCPPForceImpl::CustomCPPForceImpl(const Force& owner) {
 
 void CustomCPPForceImpl::initialize(ContextImpl& context) {
     kernel = context.getPlatform().createKernel(CalcCustomCPPForceKernel::Name(), context);
-    kernel.getAs<CalcCustomCPPForceKernel>().initialize(context.getSystem(), *this);
+    kernel.getAs<CalcCustomCPPForceKernel>().initialize(context, *this);
 }
 
 double CustomCPPForceImpl::calcForcesAndEnergy(ContextImpl& context, bool includeForces, bool includeEnergy, int groups) {
@@ -52,7 +50,5 @@ double CustomCPPForceImpl::calcForcesAndEnergy(ContextImpl& context, bool includ
 }
 
 vector<string> CustomCPPForceImpl::getKernelNames() {
-    vector<string> names;
-    names.push_back(CalcCustomCPPForceKernel::Name());
-    return names;
+    return {CalcCustomCPPForceKernel::Name()};
 }

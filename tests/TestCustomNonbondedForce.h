@@ -2,10 +2,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2008-2022 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -1500,7 +1498,7 @@ void testComputedValues(int mode) {
 
     Context context(system, integrator, platform);
     context.setPositions(positions);
-    for (double lambda : {0.0, 0.3, 0.7, 1.0}) {
+    for (double lambda : {0.0, 0.3, 0.7, 1.0, 0.3}) { // Testing 0.3 twice checks caching of long range correction coefficient
         context.setParameter("lambda", lambda);
         double e1 = context.getState(State::Energy, false, 1<<0).getPotentialEnergy();
         double e2 = context.getState(State::Energy, false, 1<<1).getPotentialEnergy();

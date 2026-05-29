@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2008-2023 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -932,9 +930,7 @@ void testTabulatedFunction() {
     integrator.addPerDofVariable("dof", 0.0);
     integrator.addComputeGlobal("global", "fn(global)");
     integrator.addComputePerDof("dof", "fn(x)");
-    vector<double> table;
-    table.push_back(10.0);
-    table.push_back(20.0);
+    vector<double> table = {10.0, 20.0};
     integrator.addTabulatedFunction("fn", new Continuous1DFunction(table, 1.0, 2.0));
     Context context(system, integrator, platform);
     vector<Vec3> positions(1);

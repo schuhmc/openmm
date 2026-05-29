@@ -218,14 +218,19 @@ void ReferenceLJCoulombIxn::calculateEwaldIxn(int numberOfAtoms, vector<Vec3>& a
     // **************************************************************************************
 
     if (includeReciprocal) {
+        double totalCharge = 0.0;
         for (int atomID = 0; atomID < numberOfAtoms; atomID++) {
-            double selfEwaldEnergy       = ONE_4PI_EPS0*atomParameters[atomID][QIndex]*atomParameters[atomID][QIndex] * alphaEwald/SQRT_PI;
-            if(ljpme) {
+            double selfEwaldEnergy = ONE_4PI_EPS0*atomParameters[atomID][QIndex]*atomParameters[atomID][QIndex] * alphaEwald/SQRT_PI;
+            totalCharge += atomParameters[atomID][QIndex];
+            if (ljpme) {
                 // Dispersion self term
                 selfEwaldEnergy -= pow(alphaDispersionEwald, 6.0) * 64.0*pow(atomParameters[atomID][SigIndex], 6.0) * pow(atomParameters[atomID][EpsIndex], 2.0) / 12.0;
             }
-            totalSelfEwaldEnergy            -= selfEwaldEnergy;
+            totalSelfEwaldEnergy -= selfEwaldEnergy;
         }
+        // Correction for the neutralizing plasma.
+        double volume = periodicBoxVectors[0][0] * periodicBoxVectors[1][1] * periodicBoxVectors[2][2];
+        totalSelfEwaldEnergy -= totalCharge*totalCharge/(8*EPSILON0*volume*alphaEwald*alphaEwald);
     }
 
     if (totalEnergy) {
@@ -238,33 +243,28 @@ void ReferenceLJCoulombIxn::calculateEwaldIxn(int numberOfAtoms, vector<Vec3>& a
     // PME
 
     if (pme && includeReciprocal) {
-        pme_t          pmedata; /* abstract handle for PME data */
-
-        pme_init(&pmedata,alphaEwald,numberOfAtoms,meshDim,5,1);
+        ReferencePME pme(alphaEwald,numberOfAtoms,meshDim,5,1);
 
         vector<double> charges(numberOfAtoms);
         for (int i = 0; i < numberOfAtoms; i++)
             charges[i] = atomParameters[i][QIndex];
-        pme_exec(pmedata,atomCoordinates,forces,charges,periodicBoxVectors,&recipEnergy);
+        pme.exec(atomCoordinates, forces, charges, periodicBoxVectors, recipEnergy);
 
         if (totalEnergy)
             *totalEnergy += recipEnergy;
 
-        pme_destroy(pmedata);
-
         if (ljpme) {
             // Dispersion reciprocal space terms
-            pme_init(&pmedata,alphaDispersionEwald,numberOfAtoms,dispersionMeshDim,5,1);
+            ReferencePME ljpme(alphaDispersionEwald,numberOfAtoms,dispersionMeshDim,5,1);
 
             std::vector<Vec3> dpmeforces(numberOfAtoms);
             for (int i = 0; i < numberOfAtoms; i++)
                 charges[i] = 8.0*pow(atomParameters[i][SigIndex], 3.0) * atomParameters[i][EpsIndex];
-            pme_exec_dpme(pmedata,atomCoordinates,dpmeforces,charges,periodicBoxVectors,&recipDispersionEnergy);
+            ljpme.exec_dpme(atomCoordinates, dpmeforces, charges, periodicBoxVectors, recipDispersionEnergy);
             for (int i = 0; i < numberOfAtoms; i++)
                 forces[i] += dpmeforces[i];
             if (totalEnergy)
                 *totalEnergy += recipDispersionEnergy;
-            pme_destroy(pmedata);
         }
     }
     // Ewald method

@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2009-2015 Stanford University and the Authors.      *
  * Portions copyright (c) 2021 Advanced Micro Devices, Inc.                   *
@@ -35,12 +33,8 @@
 using namespace OpenMM;
 using namespace std;
 
-HipFFT3D::HipFFT3D(HipContext& context, int xsize, int ysize, int zsize, bool realToComplex, hipStream_t stream, HipArray& in, HipArray& out) :
-        context(context), stream(stream) {
-
+HipFFT3D::HipFFT3D(HipContext& context, int xsize, int ysize, int zsize, bool realToComplex) : context(context) {
     deviceIndex = context.getDeviceIndex();
-    inputBuffer = in.getDevicePointer();
-    outputBuffer = out.getDevicePointer();
     size_t valueSize = context.getUseDoublePrecision() ? sizeof(double) : sizeof(float);
     inputBufferSize = zsize * ysize * xsize * valueSize;
     if (realToComplex) {
@@ -54,7 +48,7 @@ HipFFT3D::HipFFT3D(HipContext& context, int xsize, int ysize, int zsize, bool re
     configuration.performR2C = realToComplex;
     configuration.device = &deviceIndex;
     configuration.num_streams = 1;
-    configuration.stream = &this->stream;
+    configuration.stream = &stream;
     configuration.doublePrecision = context.getUseDoublePrecision();
 
     configuration.FFTdim = 3;
@@ -133,7 +127,16 @@ HipFFT3D::~HipFFT3D() {
     delete app;
 }
 
-void HipFFT3D::execFFT(bool forward) {
+void HipFFT3D::execFFT(ArrayInterface& in, ArrayInterface& out, bool forward) {
+    if (forward) {
+        inputBuffer = context.unwrap(in).getDevicePointer();
+        outputBuffer = context.unwrap(out).getDevicePointer();
+    }
+    else {
+        inputBuffer = context.unwrap(out).getDevicePointer();
+        outputBuffer = context.unwrap(in).getDevicePointer();
+    }
+    stream = context.getCurrentStream();
     VkFFTResult fftResult = VkFFTAppend(app, forward ? -1 : 1, NULL);
     if (fftResult != VKFFT_SUCCESS) {
         throw OpenMMException("Error executing VkFFTAppend: "+context.intToString(fftResult));

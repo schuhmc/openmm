@@ -323,7 +323,7 @@ class PdbxReader(object):
                 curCatName,curAttName,curQuotedString,curWord = next(tokenizer)
 
             elif state == "ST_UNKNOWN":
-                self.__syntaxError("Unrecogized syntax element: " + str(curWord))
+                self.__syntaxError("Unrecognized syntax element: " + str(curWord))
                 return
                 
 
@@ -344,16 +344,16 @@ class PdbxReader(object):
         mmcifRe = re.compile(
             r"(?:"
 
-             "(?:_(.+?)[.](\S+))"               "|"  # _category.attribute
+            r"(?:_(.+?)[.](\S+))"               "|"  # _category.attribute
 
-             "(?:['](.*?)(?:[']\s|[']$))"       "|"  # single quoted strings
-             "(?:[\"](.*?)(?:[\"]\s|[\"]$))"    "|"  # double quoted strings             
+            r"(?:['](.*?)(?:[']\s|[']$))"       "|"  # single quoted strings
+            r"(?:[\"](.*?)(?:[\"]\s|[\"]$))"    "|"  # double quoted strings             
 
-             "(?:\s*#.*$)"                      "|"  # comments (dumped)
+            r"(?:\s*#.*$)"                      "|"  # comments (dumped)
 
-             "(\S+)"                                 # unquoted words
+            r"(\S+)"                                 # unquoted words
 
-             ")")
+            r")")
 
         fileIter = iter(ifh)
 
@@ -416,15 +416,15 @@ class PdbxReader(object):
         mmcifRe = re.compile(
             r"(?:"
 
-             "(?:_(.+?)[.](\S+))"               "|"  # _category.attribute
+            r"(?:_(.+?)[.](\S+))"               "|"  # _category.attribute
 
-             "(?:['\"](.*?)(?:['\"]\s|['\"]$))" "|"  # quoted strings
+            r"(?:['\"](.*?)(?:['\"]\s|['\"]$))" "|"  # quoted strings
 
-             "(?:\s*#.*$)"                      "|"  # comments (dumped)
+            r"(?:\s*#.*$)"                      "|"  # comments (dumped)
 
-             "(\S+)"                                 # unquoted words
+            r"(\S+)"                                 # unquoted words
 
-             ")")
+            r")")
 
         fileIter = iter(ifh)
 

@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2008-2024 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -66,6 +64,7 @@ OpenCLPlatform::OpenCLPlatform() {
     registerKernelFactory(UpdateStateDataKernel::Name(), factory);
     registerKernelFactory(ApplyConstraintsKernel::Name(), factory);
     registerKernelFactory(VirtualSitesKernel::Name(), factory);
+    registerKernelFactory(MinimizeKernel::Name(), factory);
     registerKernelFactory(CalcHarmonicBondForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomBondForceKernel::Name(), factory);
     registerKernelFactory(CalcHarmonicAngleForceKernel::Name(), factory);
@@ -75,6 +74,7 @@ OpenCLPlatform::OpenCLPlatform() {
     registerKernelFactory(CalcCMAPTorsionForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomTorsionForceKernel::Name(), factory);
     registerKernelFactory(CalcNonbondedForceKernel::Name(), factory);
+    registerKernelFactory(CalcConstantPotentialForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomNonbondedForceKernel::Name(), factory);
     registerKernelFactory(CalcGBSAOBCForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomGBForceKernel::Name(), factory);
@@ -85,9 +85,13 @@ OpenCLPlatform::OpenCLPlatform() {
     registerKernelFactory(CalcCustomCPPForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomCVForceKernel::Name(), factory);
     registerKernelFactory(CalcATMForceKernel::Name(), factory);
+    registerKernelFactory(CalcOrientationRestraintForceKernel::Name(), factory);
+    registerKernelFactory(CalcPythonForceKernel::Name(), factory);
+    registerKernelFactory(CalcRGForceKernel::Name(), factory);
     registerKernelFactory(CalcRMSDForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomManyParticleForceKernel::Name(), factory);
     registerKernelFactory(CalcGayBerneForceKernel::Name(), factory);
+    registerKernelFactory(CalcLCPOForceKernel::Name(), factory);
     registerKernelFactory(IntegrateVerletStepKernel::Name(), factory);
     registerKernelFactory(IntegrateNoseHooverStepKernel::Name(), factory);
     registerKernelFactory(IntegrateLangevinMiddleStepKernel::Name(), factory);
@@ -95,6 +99,8 @@ OpenCLPlatform::OpenCLPlatform() {
     registerKernelFactory(IntegrateVariableVerletStepKernel::Name(), factory);
     registerKernelFactory(IntegrateVariableLangevinStepKernel::Name(), factory);
     registerKernelFactory(IntegrateCustomStepKernel::Name(), factory);
+    registerKernelFactory(IntegrateDPDStepKernel::Name(), factory);
+    registerKernelFactory(IntegrateQTBStepKernel::Name(), factory);
     registerKernelFactory(ApplyAndersenThermostatKernel::Name(), factory);
     registerKernelFactory(ApplyMonteCarloBarostatKernel::Name(), factory);
     registerKernelFactory(RemoveCMMotionKernel::Name(), factory);
@@ -140,7 +146,7 @@ bool OpenCLPlatform::isPlatformSupported() {
     if (major < 14 || (major == 14 && minor < 3))
         // 14.3.0 is the darwin release corresponding to OS X 10.10.3. Versions prior to that
         // contained a number of serious bugs in the Apple OpenCL libraries.
-        // (See https://github.com/SimTk/openmm/issues/395 for example.)
+        // (See https://github.com/openmm/openmm/issues/395 for example.)
         return false;
 #endif
 
@@ -173,6 +179,66 @@ const string& OpenCLPlatform::getPropertyValue(const Context& context, const str
 void OpenCLPlatform::setPropertyValue(Context& context, const string& property, const string& value) const {
 }
 
+vector<map<string, string> > OpenCLPlatform::getDevices(const map<string, string>& filters) const {
+    // Check for properties that might act as filters.
+
+    int platformIndex = -1;
+    if (filters.find(OpenCLPlatformIndex()) != filters.end())
+        stringstream(filters.at(OpenCLPlatformIndex())) >> platformIndex;
+    string platformName = (filters.find(OpenCLPlatformName()) == filters.end() ? "" : filters.at(OpenCLPlatformName()));
+    int deviceIndex = -1;
+    if (filters.find(OpenCLDeviceIndex()) != filters.end())
+        stringstream(filters.at(OpenCLDeviceIndex())) >> deviceIndex;
+    string deviceName = (filters.find(OpenCLDeviceName()) == filters.end() ? "" : filters.at(OpenCLDeviceName()));
+    bool needsDouble = false;
+    if (filters.find(OpenCLPrecision()) != filters.end()) {
+        string precision = filters.at(OpenCLPrecision());
+        transform(precision.begin(), precision.end(), precision.begin(), ::tolower);
+        needsDouble = (precision != "single");
+    }
+
+    // Loop over platforms.
+
+    vector<map<string, string> > results;
+    vector<cl::Platform> platforms;
+    cl::Platform::get(&platforms);
+    for (int i = 0; i < platforms.size(); i++) {
+        if (platformIndex != -1 && platformIndex != i)
+            continue;
+        if (platformName.size() > 0 && platformName != platforms[i].getInfo<CL_PLATFORM_NAME>())
+            continue;
+
+        // Loop over devices for the platform.
+
+        vector<cl::Device> devices;
+        try {
+            platforms[i].getDevices(CL_DEVICE_TYPE_GPU | CL_DEVICE_TYPE_CPU, &devices);
+        }
+        catch (...) {
+            // There are no devices available for this platform.
+            continue;
+        }
+        for (int j = 0; j < devices.size(); j++) {
+            if (deviceIndex != -1 && deviceIndex != j)
+                continue;
+            if (deviceName.size() > 0 && deviceName != devices[j].getInfo<CL_DEVICE_NAME>())
+                continue;
+            bool supportsDouble = (devices[j].getInfo<CL_DEVICE_EXTENSIONS>().find("cl_khr_fp64") != string::npos);
+            if (needsDouble && !supportsDouble)
+                continue;
+            stringstream platformIndexStr, deviceIndexStr;
+            platformIndexStr << i;
+            deviceIndexStr << j;
+            map<string, string> properties = {{OpenCLPlatformIndex(), platformIndexStr.str()},
+                                              {OpenCLPlatformName(), platforms[i].getInfo<CL_PLATFORM_NAME>()},
+                                              {OpenCLDeviceIndex(), deviceIndexStr.str()},
+                                              {OpenCLDeviceName(), devices[j].getInfo<CL_DEVICE_NAME>()}};
+            results.push_back(properties);
+        }
+    }
+    return results;
+}
+
 void OpenCLPlatform::contextCreated(ContextImpl& context, const map<string, string>& properties) const {
     const string& platformPropValue = (properties.find(OpenCLPlatformIndex()) == properties.end() ?
             getPropertyDefaultValue(OpenCLPlatformIndex()) : properties.find(OpenCLPlatformIndex())->second);
@@ -195,7 +261,7 @@ void OpenCLPlatform::contextCreated(ContextImpl& context, const map<string, stri
     char* threadsEnv = getenv("OPENMM_CPU_THREADS");
     if (threadsEnv != NULL)
         stringstream(threadsEnv) >> threads;
-    context.setPlatformData(new PlatformData(context.getSystem(), platformPropValue, devicePropValue, precisionPropValue, cpuPmePropValue,
+    context.setPlatformData(new PlatformData(context.getSystem(), &context, platformPropValue, devicePropValue, precisionPropValue, cpuPmePropValue,
             pmeStreamPropValue, threads, NULL));
 }
 
@@ -207,7 +273,7 @@ void OpenCLPlatform::linkedContextCreated(ContextImpl& context, ContextImpl& ori
     string cpuPmePropValue = platform.getPropertyValue(originalContext.getOwner(), OpenCLUseCpuPme());
     string pmeStreamPropValue = platform.getPropertyValue(originalContext.getOwner(), OpenCLDisablePmeStream());
     int threads = reinterpret_cast<PlatformData*>(originalContext.getPlatformData())->threads.getNumThreads();
-    context.setPlatformData(new PlatformData(context.getSystem(), platformPropValue, devicePropValue, precisionPropValue, cpuPmePropValue,
+    context.setPlatformData(new PlatformData(context.getSystem(), &context, platformPropValue, devicePropValue, precisionPropValue, cpuPmePropValue,
             pmeStreamPropValue, threads, &originalContext));
 }
 
@@ -216,9 +282,9 @@ void OpenCLPlatform::contextDestroyed(ContextImpl& context) const {
     delete data;
 }
 
-OpenCLPlatform::PlatformData::PlatformData(const System& system, const string& platformPropValue, const string& deviceIndexProperty,
+OpenCLPlatform::PlatformData::PlatformData(const System& system, ContextImpl* context, const string& platformPropValue, const string& deviceIndexProperty,
         const string& precisionProperty, const string& cpuPmeProperty, const string& pmeStreamProperty, int numThreads, ContextImpl* originalContext) :
-            removeCM(false), stepCount(0), computeForceCount(0), time(0.0), hasInitializedContexts(false), threads(numThreads)  {
+            context(context), removeCM(false), stepCount(0), computeForceCount(0), time(0.0), hasInitializedContexts(false), threads(numThreads)  {
     int platformIndex = -1;
     if (platformPropValue.length() > 0)
         stringstream(platformPropValue) >> platformIndex;

@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2008-2024 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -118,7 +116,7 @@ State Context::getState(int types, bool enforcePeriodicBox, int groups) const {
     }
     if (types&State::Positions) {
         vector<Vec3> positions;
-        impl->getPositions(positions);
+        impl->getPositions(positions, enforcePeriodicBox);
         if (enforcePeriodicBox) {
             const vector<vector<int> >& molecules = impl->getMolecules();
             for (auto& mol : molecules) {

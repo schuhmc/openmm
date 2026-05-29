@@ -38,7 +38,7 @@ def getText(subNodePath, node):
     return s.strip()
 
 def convertOpenMMPrefix(name):
-    return name.replace('OpenMM::', 'OpenMM_')
+    return name.replace('::', '_')
 
 OPENMM_RE_PATTERN=re.compile("(.*)OpenMM:[a-zA-Z0-9_:]*:(.*)")
 def stripOpenMMPrefix(name, rePattern=OPENMM_RE_PATTERN):
@@ -65,13 +65,15 @@ class WrapperGenerator:
     """This is the parent class of generators for various API wrapper files.  It defines functions common to all of them."""
     
     def __init__(self, inputDirname, output):
-        self.skipClasses = ['OpenMM::Vec3', 'OpenMM::XmlSerializer', 'OpenMM::Kernel', 'OpenMM::KernelImpl', 'OpenMM::KernelFactory', 'OpenMM::ContextImpl', 'OpenMM::SerializationNode', 'OpenMM::SerializationProxy']
+        self.skipClasses = ['OpenMM::Vec3', 'OpenMM::XmlSerializer', 'OpenMM::Kernel', 'OpenMM::KernelImpl', 'OpenMM::KernelFactory',
+                            'OpenMM::ContextImpl', 'OpenMM::SerializationNode', 'OpenMM::SerializationProxy', 'OpenMM::PythonForce']
         self.skipMethods = ['State OpenMM::Context::getState',
                             'void OpenMM::Context::createCheckpoint',
                             'void OpenMM::Context::loadCheckpoint',
                             'const std::vector<std::vector<int> >& OpenMM::Context::getMolecules',
                             'static std::vector<std::string> OpenMM::Platform::getPluginLoadFailures',
                             'static std::vector<std::string> OpenMM::Platform::loadPluginsFromDirectory',
+                            'virtual std::vector<std::map<std::string, std::string> > OpenMM::Platform::getDevices',
                             'Vec3 OpenMM::LocalCoordinatesSite::getOriginWeights',
                             'Vec3 OpenMM::LocalCoordinatesSite::getXWeights',
                             'Vec3 OpenMM::LocalCoordinatesSite::getYWeights',
@@ -79,6 +81,8 @@ class WrapperGenerator:
                             'const std::vector<int>& OpenMM::NoseHooverIntegrator::getAllThermostatedIndividualParticles',
                             'const std::vector<std::tuple<int, int, double> >& OpenMM::NoseHooverIntegrator::getAllThermostatedPairs',
                             'virtual void OpenMM::NoseHooverIntegrator::stateChanged',
+                            'Vec3 OpenMM::MonteCarloAnisotropicBarostat::computeCurrentPressure',
+                            'Vec3 OpenMM::MonteCarloMembraneBarostat::computeCurrentPressure',
                             'virtual bool OpenMM::TabulatedFunction::operator==',
                             'bool OpenMM::Continuous1DFunction::operator==',
                             'bool OpenMM::Continuous2DFunction::operator==',
@@ -92,10 +96,14 @@ class WrapperGenerator:
                             'bool OpenMM::Continuous3DFunction::operator!=',
                             'bool OpenMM::Discrete1DFunction::operator!=',
                             'bool OpenMM::Discrete2DFunction::operator!=',
-                            'bool OpenMM::Discrete3DFunction::operator!='
+                            'bool OpenMM::Discrete3DFunction::operator!=',
+                            'const std::map<int, int>& OpenMM::DPDIntegrator::getParticleTypes',
+                            'const std::map<int, int>& OpenMM::QTBIntegrator::getParticleTypes',
+                            'const std::map<int, double>& OpenMM::QTBIntegrator::getTypeAdaptationRates'
                            ]
         self.skipMethods = [s.replace(' ', '') for s in self.skipMethods]
         self.hideClasses = ['Kernel', 'KernelImpl', 'KernelFactory', 'ContextImpl', 'SerializationNode', 'SerializationProxy']
+        self.renameTypes = {}
         self.nodeByID={}
 
         # Read all the XML files and merge them into a single document.
@@ -137,6 +145,10 @@ class WrapperGenerator:
                 baseNode = self.getNodeByID(baseNodeID)
                 self.findBaseNodes(baseNode, excludedClassNodes)
         excludedClassNodes.append(node)
+        for inner in findNodes(node, "innerclass", prot="public"):
+            fullName = getNodeText(inner)
+            shortName = fullName.rsplit("::")[-1]
+            self.renameTypes[shortName] = fullName
 
     def getClassMethods(self, classNode):
         className = getText("compoundname", classNode)
@@ -293,8 +305,8 @@ class CHeaderGenerator(WrapperGenerator):
             if methodName in nameCount:
                 # There are multiple methods with the same name.
                 count = nameCount[methodName]
-                methodName = "%s_%d" % (methodName, count)
                 nameCount[methodName] = count+1
+                methodName = "%s_%d" % (methodName, count)
             else:
                 nameCount[methodName] = 1
             self.out.write("extern OPENMM_EXPORT %s %s_%s(" % (returnType, typeName, methodName))
@@ -559,14 +571,16 @@ class CSourceGenerator(WrapperGenerator):
             if methodName in nameCount:
                 # There are multiple methods with the same name.
                 count = nameCount[methodName]
-                methodName = "%s_%d" % (methodName, count)
                 nameCount[methodName] = count+1
+                methodName = "%s_%d" % (methodName, count)
             else:
                 nameCount[methodName] = 1
             methodType = getText("type", methodNode)
             returnType = self.getType(methodType)
             if methodType in self.classesByShortName:
                 methodType = self.classesByShortName[methodType]
+            for key, value in self.renameTypes.items():
+                methodType = methodType.replace(key, value)
             self.out.write("OPENMM_EXPORT %s %s_%s(" % (returnType, typeName, methodName))
             isInstanceMethod = (methodNode.attrib['static'] != 'yes')
             if isInstanceMethod:
@@ -657,7 +671,7 @@ class CSourceGenerator(WrapperGenerator):
         if wrappedType == type:
             return value;
         if type.endswith('*') or type.endswith('&'):
-            return 'reinterpret_cast<%s>(%s)' % (wrappedType, value)
+            return 'reinterpret_cast<%s>(%s)' % (wrappedType.replace('::', '_'), value)
         return 'static_cast<%s>(%s)' % (wrappedType, value)
     
     def unwrapValue(self, type, value):
@@ -672,7 +686,22 @@ class CSourceGenerator(WrapperGenerator):
             return 'static_cast<%s>(%s)' % (self.classesByShortName[type], value)
         if type == 'bool':
             return value
+        type = self.convertShortName(type)
         return 'reinterpret_cast<%s>(%s)' % (type, value)
+
+    def convertShortName(self, shortName):
+        name = shortName
+        prefix = ''
+        suffix = ''
+        if name.endswith('&') or name.endswith('*'):
+            suffix = name[-1]
+            name = name[:-1]
+        if name.startswith('const '):
+            prefix = 'const '
+            name = name[6:]
+        if name.strip() in self.classesByShortName:
+            return f'{prefix}{self.classesByShortName[name.strip()]}{suffix}'
+        return shortName
 
     def writeOutput(self):
         print("""
@@ -1015,6 +1044,7 @@ class FortranHeaderGenerator(WrapperGenerator):
         
         # Write other methods
         nameCount = {}
+        allNames = set()
         for methodNode in methodList:
             methodName = methodNames[methodNode]
             if methodName in (shortClassName, destructorName):
@@ -1028,8 +1058,8 @@ class FortranHeaderGenerator(WrapperGenerator):
             if methodName in nameCount:
                 # There are multiple methods with the same name.
                 count = nameCount[methodName]
-                methodName = "%s_%d" % (methodName, count)
                 nameCount[methodName] = count+1
+                methodName = "%s_%d" % (methodName, count)
             else:
                 nameCount[methodName] = 1
             returnType = self.getType(getText("type", methodNode))
@@ -1037,6 +1067,10 @@ class FortranHeaderGenerator(WrapperGenerator):
             hasReturnArg = not (hasReturnValue or returnType == 'void')
             functionName = "%s_%s" % (typeName, methodName)
             functionName = functionName[:63]
+            if functionName in allNames:
+                # Two functions get truncated to have the same name, so skip the later ones.
+                continue
+            allNames.add(functionName)
             if hasReturnValue:
                 self.out.write("        function ")
             else:
@@ -1580,6 +1614,7 @@ class FortranSourceGenerator(WrapperGenerator):
         
         # Write other methods
         nameCount = {}
+        allNames = set()
         for methodNode in methodList:
             methodName = methodNames[methodNode]
             if methodName in (shortClassName, destructorName):
@@ -1595,12 +1630,16 @@ class FortranSourceGenerator(WrapperGenerator):
             if methodName in nameCount:
                 # There are multiple methods with the same name.
                 count = nameCount[methodName]
-                methodName = "%s_%d" % (methodName, count)
                 nameCount[methodName] = count+1
+                methodName = "%s_%d" % (methodName, count)
             else:
                 nameCount[methodName] = 1
             functionName = "%s_%s" % (typeName, methodName)
             truncatedName = functionName[:63]
+            if truncatedName in allNames:
+                # Two functions get truncated to have the same name, so skip the later ones.
+                continue
+            allNames.add(truncatedName)
             self.writeOneMethod(classNode, methodNode, functionName, truncatedName.lower()+'_')
             self.writeOneMethod(classNode, methodNode, functionName, truncatedName.upper())
     

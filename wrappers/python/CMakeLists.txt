@@ -78,6 +78,7 @@ foreach(SUBDIR ${SUBDIRS})
         "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/*psf"
         "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/charmm22.*"
         "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/par*.inp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/*.xyz"
     )
     foreach(file ${STAGING_INPUT_FILES1})
         set(STAGING_INPUT_FILES ${STAGING_INPUT_FILES} "${file}")
@@ -163,6 +164,7 @@ set(SWIG_INPUT_FILES2
     "${SWIG_OPENMM_DIR}/swig_lib/python/features.i"
     "${SWIG_OPENMM_DIR}/swig_lib/python/header.i"
     "${SWIG_OPENMM_DIR}/swig_lib/python/pythoncode.i"
+    "${SWIG_OPENMM_DIR}/swig_lib/python/pythonforce.i"
     "${SWIG_OPENMM_DIR}/swig_lib/python/typemaps.i"
 )
 

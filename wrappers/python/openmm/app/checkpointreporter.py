@@ -1,10 +1,8 @@
 """
 checkpointreporter.py: Saves checkpoint files for a simulation
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
 Portions copyright (c) 2014-2021 Stanford University and the Authors.
 Authors: Robert McGibbon, Peter Eastman
@@ -31,10 +29,6 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 from __future__ import absolute_import
 __author__ = "Robert McGibbon"
 __version__ = "1.0"
-
-import openmm as mm
-import os
-import os.path
 
 __all__ = ['CheckpointReporter']
 
@@ -126,29 +120,15 @@ class CheckpointReporter(object):
         state : State
             The current state of the simulation
         """
-        if isinstance(self._file, str):
-            # Do a safe save.
-
-            tempFilename1 = self._file+".backup1"
-            tempFilename2 = self._file+".backup2"
-            if self._writeState:
-                simulation.saveState(tempFilename1)
-            else:
-                simulation.saveCheckpoint(tempFilename1)
-            exists = os.path.exists(self._file)
-            if exists:
-                os.rename(self._file, tempFilename2)
-            os.rename(tempFilename1, self._file)
-            if exists:
-                os.remove(tempFilename2)
-        else:
-            # Replace the contents of the file.
-
+        isFileObj = not isinstance(self._file, str)
+        if isFileObj:
             self._file.seek(0)
-            if self._writeState:
-                state = simulation.context.getState(positions=True, velocities=True, parameters=True, integratorParameters=True)
-                self._file.write(mm.XmlSerializer.serialize(state))
-            else:
-                self._file.write(simulation.context.createCheckpoint())
+
+        if self._writeState:
+            simulation.saveState(self._file)
+        else:
+            simulation.saveCheckpoint(self._file)
+
+        if isFileObj:
             self._file.truncate()
             self._file.flush()

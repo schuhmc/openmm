@@ -22,6 +22,7 @@ from .pdbreporter import PDBReporter, PDBxReporter
 from .xtcreporter import XTCReporter
 from .amberprmtopfile import AmberPrmtopFile, HCT, OBC1, OBC2, GBn, GBn2
 from .amberinpcrdfile import AmberInpcrdFile
+from .tinkerfiles import TinkerFiles
 from .dcdfile import DCDFile
 from .gromacsgrofile import GromacsGroFile
 from .gromacstopfile import GromacsTopFile
@@ -36,6 +37,9 @@ from .charmmparameterset import CharmmParameterSet
 from .charmmpsffile import CharmmPsfFile, CharmmPSFWarning
 from .simulatedtempering import SimulatedTempering
 from .metadynamics import Metadynamics, BiasVariable
+from .replicaexchangesampler import ReplicaExchangeSampler
+from .replicaexchangereporter import ReplicaExchangeReporter
+from .expandedensemblesampler import ExpandedEnsembleSampler
 
 # Enumerated values
 

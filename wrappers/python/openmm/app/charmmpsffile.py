@@ -2,11 +2,9 @@
 Provides a Python class for parsing a PSF file and setting up a system
 structure for it within the OpenMM framework.
 
-This file is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of Biological
-Structures at Stanford, funded under the NIH Roadmap for Medical Research,
-grant U54 GM072970. See https://simtk.org.  This code was originally part of
-the ParmEd program and was ported for use with OpenMM.
+This is part of the OpenMM molecular simulation toolkit.  This code was
+originally part of the ParmEd program and was ported for use with OpenMM.
+See https://openmm.org/development.
 
 Copyright (c) 2014-2020 the Authors
 
@@ -34,6 +32,7 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 from __future__ import division, absolute_import, print_function
 
 from functools import wraps
+from itertools import combinations
 from math import pi, cos, sin, sqrt
 import os
 import re
@@ -42,10 +41,11 @@ import openmm as mm
 from openmm.vec3 import Vec3
 import openmm.unit as u
 from openmm.app import (forcefield as ff, Topology, element, PDBFile)
-from openmm.app.amberprmtopfile import HCT, OBC1, OBC2, GBn, GBn2
+from openmm.app.amberprmtopfile import HCT, OBC1, OBC2, GBn, GBn2, Unspecified
 from openmm.app.internal.customgbforces import (GBSAHCTForce,
                 GBSAOBC1Force, GBSAOBC2Force, GBSAGBnForce, GBSAGBn2Force)
 from openmm.app.internal.unitcell import computePeriodicBoxVectors
+from openmm.app.internal import lcpo
 # CHARMM imports
 from openmm.app.internal.charmm.topologyobjects import (
                 ResidueList, AtomList, TrackedList, Bond, Angle, Dihedral,
@@ -603,9 +603,9 @@ class CharmmPsfFile(object):
         - If any parameters that are necessary cannot be found, a
           MissingParameter exception is raised.
         - If any dihedral or improper parameters cannot be found, I will try
-          inserting wildcards (at either end for dihedrals and as the two
-          central atoms in impropers) and see if that matches.  Wild-cards
-          will apply ONLY if specific parameters cannot be found.
+          inserting wildcards (in up to three positions) and see if that
+          matches.  Wild-cards will apply ONLY if specific parameters cannot be
+          found.
         - This method will expand the dihedral_parameter_list attribute by
           adding a separate Dihedral object for each term for types that
           have a multi-term expansion
@@ -655,16 +655,11 @@ class CharmmPsfFile(object):
         for dih in self.dihedral_list:
             # Store the atoms
             a1, a2, a3, a4 = dih.atom1, dih.atom2, dih.atom3, dih.atom4
-            at1, at2, at3, at4 = a1.attype, a2.attype, a3.attype, a4.attype
-            # First see if the exact dihedral is specified
-            key = min((at1,at2,at3,at4), (at4,at3,at2,at1))
-            if not key in parmset.dihedral_types:
-                # Check for wild-cards
-                key = min(('X',at2,at3,'X'), ('X',at3,at2,'X'))
-                if not key in parmset.dihedral_types:
-                    raise MissingParameter('No dihedral parameters found for '
-                                           '%r' % dih)
-            dtlist = parmset.dihedral_types[key]
+            try:
+                at_list = [a1.attype, a2.attype, a3.attype, a4.attype]
+                dtlist = _match_with_wildcards(at_list, parmset.dihedral_types, 3)
+            except KeyError:
+                raise MissingParameter('No dihedral parameters found for %r' % dih)
             for i, dt in enumerate(dtlist):
                 self.dihedral_parameter_list.append(Dihedral(a1,a2,a3,a4,dt))
                 # See if we include the end-group interactions for this
@@ -678,18 +673,11 @@ class CharmmPsfFile(object):
         for imp in self.improper_list:
             # Store the atoms
             a1, a2, a3, a4 = imp.atom1, imp.atom2, imp.atom3, imp.atom4
-            at1, at2, at3, at4 = a1.attype, a2.attype, a3.attype, a4.attype
-            key = min((at1,at2,at3,at4), (at4,at3,at2,at1))
-            if not key in parmset.improper_types:
-                key = min((at1,'X', 'X',at4),(at4,'X','X',at1))
-                if not key in parmset.improper_types:
-                    raise MissingParameter('No improper dihedral parameters found for '
-                                           '%r' % imp)
             try:
-                imp.improper_type = parmset.improper_types[key]
+                at_list = [a1.attype, a2.attype, a3.attype, a4.attype]
+                imp.improper_type = _match_with_wildcards(at_list, parmset.improper_types, 3)
             except KeyError:
-                raise MissingParameter('No improper parameters found for %r' %
-                                       imp)
+                raise MissingParameter('No improper parameters found for %r' % imp)
         # Now do the cmaps. These will not have wild-cards
         for cmap in self.cmap_list:
             # Store the atoms for easy reference
@@ -808,7 +796,8 @@ class CharmmPsfFile(object):
                      ewaldErrorTolerance=0.0005,
                      flexibleConstraints=True,
                      verbose=False,
-                     gbsaModel=None,
+                     sasaMethod=Unspecified,
+                     gbsaModel=Unspecified,
                      drudeMass=0.4*u.amu):
         """Construct an OpenMM System representing the topology described by the
         prmtop file. You MUST have loaded a parameter set into this PSF before
@@ -865,9 +854,14 @@ class CharmmPsfFile(object):
             If True, parameters for constrained degrees of freedom will be added to the System
         verbose : bool=False
             Optionally prints out a running progress report
-        gbsaModel : str=None
-            Can be ACE (to use the ACE solvation model) or None. Other values
-            raise a ValueError
+        sasaMethod : str, optional
+            The SA model used to model the nonpolar solvation component of GB
+            implicit solvent models. If GB is active, this must be 'ACE',
+            'LCPO', or None (the latter indicates no SA model will be used,
+            which is the default behavior if this parameter is not specified).
+            Other values will result in a ValueError.
+        gbsaModel : str, optional
+            Deprecated.  Use `sasaMethod` instead.
         drudeMass : mass=0.4*amu
             The mass to use for Drude particles.  Any mass added to a Drude particle is
             subtracted from its parent atom to keep their total mass the same.
@@ -876,8 +870,12 @@ class CharmmPsfFile(object):
         self.loadParameters(params)
         hasbox = self.topology.getUnitCellDimensions() is not None
         # Check GB input parameters
-        if implicitSolvent is not None and gbsaModel not in ('ACE', None):
-            raise ValueError('gbsaModel must be ACE or None')
+        if sasaMethod is Unspecified and gbsaModel is not Unspecified:
+            sasaMethod = gbsaModel
+        if sasaMethod is Unspecified:
+            sasaMethod = None
+        if implicitSolvent is not None and sasaMethod not in ('ACE', 'LCPO', None):
+            raise ValueError('sasaMethod must be ACE, LCPO, or None')
         # Set the cutoff distance in nanometers
         cutoff = None
         if nonbondedMethod is not ff.NoCutoff:
@@ -1228,6 +1226,8 @@ class CharmmPsfFile(object):
                 force.addParticle(atm.charge, sigma_scale*atm.type.rmin*length_conv,
                                   abs(atm.type.epsilon*ene_conv))
         else:
+            if nonbondedMethod is ff.LJPME:
+                raise ValueError('LJPME is not supported when NBFIX terms are present')
             for atm in self.atom_list:
                 force.addParticle(atm.charge, 1.0, 0.0)
             # Now add the custom nonbonded force that implements NBFIX. First
@@ -1410,12 +1410,12 @@ class CharmmPsfFile(object):
                 idxa = pair[1]
                 parent_exclude_list[idx].append(idxa)
                 force.addException(idx, idxa, 0.0, 0.1, 0.0)
-            # If lonepairs and Drude particles are bonded to the same parent atom, add exception
-            for excludeterm in parent_exclude_list:
-                if(len(excludeterm) >= 2):
-                    for i in range(len(excludeterm)):
-                        for j in range(i):
-                            force.addException(excludeterm[j], excludeterm[i], 0.0, 0.1, 0.0)
+        # If lonepairs and Drude particles are bonded to the same parent atom, add exception
+        for excludeterm in parent_exclude_list:
+            if(len(excludeterm) >= 2):
+                for i in range(len(excludeterm)):
+                    for j in range(i):
+                        force.addException(excludeterm[j], excludeterm[i], 0.0, 0.1, 0.0)
         # Exclude 1-2 and 1-3 pairs as well as the lonepair/Drude attached onto them
         if nbxmod > 1:
             for ia1, ia2 in self.pair_12_list:
@@ -1547,19 +1547,19 @@ class CharmmPsfFile(object):
                 implicitSolventKappa = implicitSolventKappa.value_in_unit(
                                             (1.0/u.nanometer).unit)
             if implicitSolvent is HCT:
-                gb = GBSAHCTForce(solventDielectric, soluteDielectric, gbsaModel,
+                gb = GBSAHCTForce(solventDielectric, soluteDielectric, sasaMethod,
                                   cutoff, kappa=implicitSolventKappa)
             elif implicitSolvent is OBC1:
-                gb = GBSAOBC1Force(solventDielectric, soluteDielectric, gbsaModel,
+                gb = GBSAOBC1Force(solventDielectric, soluteDielectric, sasaMethod,
                                    cutoff, kappa=implicitSolventKappa)
             elif implicitSolvent is OBC2:
-                gb = GBSAOBC2Force(solventDielectric, soluteDielectric, gbsaModel,
+                gb = GBSAOBC2Force(solventDielectric, soluteDielectric, sasaMethod,
                                    cutoff, kappa=implicitSolventKappa)
             elif implicitSolvent is GBn:
-                gb = GBSAGBnForce(solventDielectric, soluteDielectric, gbsaModel,
+                gb = GBSAGBnForce(solventDielectric, soluteDielectric, sasaMethod,
                                   cutoff, kappa=implicitSolventKappa)
             elif implicitSolvent is GBn2:
-                gb = GBSAGBn2Force(solventDielectric, soluteDielectric, gbsaModel,
+                gb = GBSAGBn2Force(solventDielectric, soluteDielectric, sasaMethod,
                                    cutoff, kappa=implicitSolventKappa)
             gb_parms = gb.getStandardParameters(self.topology)
             for atom, gb_parm in zip(self.atom_list, gb_parms):
@@ -1579,6 +1579,9 @@ class CharmmPsfFile(object):
             gb.finalize()
             system.addForce(gb)
             force.setReactionFieldDielectric(1.0) # applies to NonbondedForce
+
+            if sasaMethod == 'LCPO':
+                lcpo.addLCPOForce(system, lcpo.getLCPOParamsTopology(self.topology), nonbondedMethod is ff.CutoffPeriodic)
 
         # See if we repartition the hydrogen masses
         if hydrogenMass is not None:
@@ -1851,6 +1854,26 @@ def _mbondi3_radii(atom_list):
         if atom.name == 'OXT':
             radii[i] = 1.4
     return radii  # Converted to nanometers above
+
+# ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+def _match_with_wildcards(at_list, type_dict, max_wc_count):
+    """
+    Tries to find a match for at_list in type_dict.  If one can't be found,
+    tries to insert up to max_wc_count wildcards in different combinations.
+    Assumes that for a given key, min(key, key[::-1]) is the one in type_dict.
+    """
+
+    for wc_count in range(max_wc_count + 1):
+        for wc_indices in combinations(range(len(at_list)), wc_count):
+            key = list(at_list)
+            for wc_index in wc_indices:
+                key[wc_index] = 'X'
+            key = tuple(key)
+            key = min(key, key[::-1])
+            if key in type_dict:
+                return type_dict[key]
+    raise KeyError(key)
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 

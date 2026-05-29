@@ -189,6 +189,244 @@ class TestAPIUnits(unittest.TestCase):
         force.setNonbondedMethod(NonbondedForce.LJPME)
         self.assertTrue(force.usesPeriodicBoundaryConditions())
 
+    def testConstantPotentialForce(self):
+        """ Tests the ConstantPotentialForce API features """
+        force = ConstantPotentialForce()
+
+        force.addParticle(1.0)
+        force.addParticle(1.0*coulomb)
+        self.assertEqual(force.getNumParticles(), 2)
+        charge = force.getParticleParameters(0)
+        self.assertAlmostEqualUnit(charge, 1.0*elementary_charge)
+        self.assertIs(charge.unit, elementary_charge)
+        charge = force.getParticleParameters(1)
+        self.assertAlmostEqualUnit(charge, 1.0*coulomb)
+        self.assertIs(charge.unit, elementary_charge)
+
+        force.setParticleParameters(0, 2.0*coulomb)
+        force.setParticleParameters(1, 2.0)
+        charge = force.getParticleParameters(0)
+        self.assertAlmostEqualUnit(charge, 2.0*coulomb)
+        charge = force.getParticleParameters(1)
+        self.assertAlmostEqualUnit(charge, 2.0*elementary_charge)
+
+        force.addException(0, 1, 1.0)
+        force.addException(1, 2, 1.0*coulomb*coulomb)
+        self.assertEqual(force.getNumExceptions(), 2)
+        index1, index2, chargeProd = force.getExceptionParameters(0)
+        self.assertEqual(index1, 0)
+        self.assertEqual(index2, 1)
+        self.assertAlmostEqualUnit(chargeProd, 1.0*elementary_charge*elementary_charge)
+        self.assertIs(chargeProd.unit, elementary_charge*elementary_charge)
+        index1, index2, chargeProd = force.getExceptionParameters(1)
+        self.assertEqual(index1, 1)
+        self.assertEqual(index2, 2)
+        self.assertAlmostEqualUnit(chargeProd, 1.0*coulomb*coulomb)
+        self.assertIs(chargeProd.unit, elementary_charge*elementary_charge)
+
+        force.setExceptionParameters(0, 3, 4, 2.0*coulomb*coulomb)
+        force.setExceptionParameters(1, 5, 6, 2.0)
+        index1, index2, chargeProd = force.getExceptionParameters(0)
+        self.assertEqual(index1, 3)
+        self.assertEqual(index2, 4)
+        self.assertAlmostEqualUnit(chargeProd, 2.0*coulomb*coulomb)
+        self.assertIs(chargeProd.unit, elementary_charge*elementary_charge)
+        index1, index2, chargeProd = force.getExceptionParameters(1)
+        self.assertEqual(index1, 5)
+        self.assertEqual(index2, 6)
+        self.assertAlmostEqualUnit(chargeProd, 2.0*elementary_charge*elementary_charge)
+        self.assertIs(chargeProd.unit, elementary_charge*elementary_charge)
+
+        force.addElectrode((0, 1, 2), 1.0, 1.0, 1.0)
+        force.addElectrode((3, 4, 5), 1.0*kilocalorie_per_mole/coulomb, 1.0*angstrom, 1.0/angstrom)
+        self.assertEqual(force.getNumElectrodes(), 2)
+        indices, potential, gaussianWidth, thomasFermiScale = force.getElectrodeParameters(0)
+        self.assertEqual(set(indices), {0, 1, 2})
+        self.assertAlmostEqualUnit(potential, 1.0*kilojoule_per_mole/elementary_charge)
+        self.assertAlmostEqualUnit(gaussianWidth, 1.0*nanometer)
+        self.assertAlmostEqualUnit(thomasFermiScale, 1.0/nanometer)
+        self.assertIs(potential.unit, kilojoule_per_mole/elementary_charge)
+        self.assertIs(gaussianWidth.unit, nanometer)
+        self.assertIs(thomasFermiScale.unit, nanometer**-1)
+        indices, potential, gaussianWidth, thomasFermiScale = force.getElectrodeParameters(1)
+        self.assertEqual(set(indices), {3, 4, 5})
+        self.assertAlmostEqualUnit(potential, 1.0*kilocalorie_per_mole/coulomb)
+        self.assertAlmostEqualUnit(gaussianWidth, 1.0*angstrom)
+        self.assertAlmostEqualUnit(thomasFermiScale, 1.0/angstrom)
+        self.assertIs(potential.unit, kilojoule_per_mole/elementary_charge)
+        self.assertIs(gaussianWidth.unit, nanometer)
+        self.assertIs(thomasFermiScale.unit, nanometer**-1)
+
+        force.setElectrodeParameters(0, (6, 7, 8), 2.0*kilocalorie_per_mole/coulomb, 2.0*angstrom, 2.0/angstrom)
+        force.setElectrodeParameters(1, (9, 10, 11), 2.0, 2.0, 2.0)
+        indices, potential, gaussianWidth, thomasFermiScale = force.getElectrodeParameters(0)
+        self.assertEqual(set(indices), {6, 7, 8})
+        self.assertAlmostEqualUnit(potential, 2.0*kilocalorie_per_mole/coulomb)
+        self.assertAlmostEqualUnit(gaussianWidth, 2.0*angstrom)
+        self.assertAlmostEqualUnit(thomasFermiScale, 2.0/angstrom)
+        indices, potential, gaussianWidth, thomasFermiScale = force.getElectrodeParameters(1)
+        self.assertEqual(set(indices), {9, 10, 11})
+        self.assertAlmostEqualUnit(potential, 2.0*kilojoule_per_mole/elementary_charge)
+        self.assertAlmostEqualUnit(gaussianWidth, 2.0*nanometer)
+        self.assertAlmostEqualUnit(thomasFermiScale, 2.0/nanometer)
+
+        force.setCutoffDistance(2.0)
+        cutoffDistance = force.getCutoffDistance()
+        self.assertAlmostEqualUnit(cutoffDistance, 2.0*nanometer)
+        self.assertIs(cutoffDistance.unit, nanometer)
+        force.setCutoffDistance(2.0*angstrom)
+        cutoffDistance = force.getCutoffDistance()
+        self.assertAlmostEqualUnit(cutoffDistance, 2.0*angstrom)
+        self.assertIs(cutoffDistance.unit, nanometer)
+
+        force.setEwaldErrorTolerance(1e-4)
+        self.assertEqual(force.getEwaldErrorTolerance(), 1e-4)
+        force.setEwaldErrorTolerance(2e-4)
+        self.assertEqual(force.getEwaldErrorTolerance(), 2e-4)
+
+        force.setPMEParameters(1.0, 10, 10, 10)
+        alpha, nx, ny, nz = force.getPMEParameters()
+        self.assertAlmostEqualUnit(alpha, 1.0/nanometer)
+        self.assertEqual(nx, 10)
+        self.assertEqual(ny, 10)
+        self.assertEqual(nz, 10)
+        self.assertIs(alpha.unit, nanometer**-1)
+        force.setPMEParameters(1.0/angstrom, 20, 20, 20)
+        alpha, nx, ny, nz = force.getPMEParameters()
+        self.assertAlmostEqualUnit(alpha, 1.0/angstrom)
+        self.assertEqual(nx, 20)
+        self.assertEqual(ny, 20)
+        self.assertEqual(nz, 20)
+        self.assertIs(alpha.unit, nanometer**-1)
+
+        self.assertTrue(force.usesPeriodicBoundaryConditions())
+        force.setExceptionsUsePeriodicBoundaryConditions(False)
+        self.assertFalse(force.getExceptionsUsePeriodicBoundaryConditions())
+        force.setExceptionsUsePeriodicBoundaryConditions(True)
+        self.assertTrue(force.getExceptionsUsePeriodicBoundaryConditions())
+        force.setConstantPotentialMethod(ConstantPotentialForce.CG)
+        self.assertEqual(force.getConstantPotentialMethod(), ConstantPotentialForce.CG)
+        force.setConstantPotentialMethod(ConstantPotentialForce.Matrix)
+        self.assertEqual(force.getConstantPotentialMethod(), ConstantPotentialForce.Matrix)
+        force.setUsePreconditioner(False)
+        self.assertFalse(force.getUsePreconditioner())
+        force.setUsePreconditioner(True)
+        self.assertTrue(force.getUsePreconditioner())
+        force.setUseChargeConstraint(False)
+        self.assertFalse(force.getUseChargeConstraint())
+        force.setUseChargeConstraint(True)
+        self.assertTrue(force.getUseChargeConstraint())
+
+        force.setChargeConstraintTarget(1.0)
+        target = force.getChargeConstraintTarget()
+        self.assertAlmostEqualUnit(target, 1.0*elementary_charge)
+        self.assertIs(target.unit, elementary_charge)
+        force.setChargeConstraintTarget(1.0*coulomb)
+        target = force.getChargeConstraintTarget()
+        self.assertAlmostEqualUnit(target, 1.0*coulomb)
+        self.assertIs(target.unit, elementary_charge)
+
+        force.setCGErrorTolerance(1.0)
+        target = force.getCGErrorTolerance()
+        self.assertAlmostEqualUnit(target, 1.0*kilojoule_per_mole/elementary_charge)
+        self.assertIs(target.unit, kilojoule_per_mole/elementary_charge)
+        force.setCGErrorTolerance(1.0*kilocalorie_per_mole/coulomb)
+        target = force.getCGErrorTolerance()
+        self.assertAlmostEqualUnit(target, 1.0*kilocalorie_per_mole/coulomb)
+        self.assertIs(target.unit, kilojoule_per_mole/elementary_charge)
+
+        force.setExternalField(Vec3(1.0, 2.0, 3.0))
+        field_x, field_y, field_z = force.getExternalField()
+        self.assertAlmostEqualUnit(field_x, 1.0*kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertAlmostEqualUnit(field_y, 2.0*kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertAlmostEqualUnit(field_z, 3.0*kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertIs(field_x.unit, kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertIs(field_y.unit, kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertIs(field_z.unit, kilojoule_per_mole/(nanometer*elementary_charge))
+        force.setExternalField(Vec3(1.0, 2.0, 3.0)*kilocalorie_per_mole/(angstrom*coulomb))
+        field_x, field_y, field_z = force.getExternalField()
+        self.assertAlmostEqualUnit(field_x, 1.0*kilocalorie_per_mole/(angstrom*coulomb))
+        self.assertAlmostEqualUnit(field_y, 2.0*kilocalorie_per_mole/(angstrom*coulomb))
+        self.assertAlmostEqualUnit(field_z, 3.0*kilocalorie_per_mole/(angstrom*coulomb))
+        self.assertIs(field_x.unit, kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertIs(field_y.unit, kilojoule_per_mole/(nanometer*elementary_charge))
+        self.assertIs(field_z.unit, kilojoule_per_mole/(nanometer*elementary_charge))
+
+        system = System()
+        system.addParticle(1.0)
+        system.addParticle(1.0)
+        force = ConstantPotentialForce()
+        force.addParticle(2.0*elementary_charge)
+        force.addParticle(0.0*elementary_charge)
+        force.addElectrode((1,), 0.0, 1.0, 0.0)
+        force.setUseChargeConstraint(True)
+        system.addForce(force)
+        context = Context(system, VerletIntegrator(0.001))
+        context.setPositions([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+        charge1, charge2 = force.getCharges(context)
+        self.assertAlmostEqualUnit(charge1, 2.0*elementary_charge)
+        self.assertAlmostEqualUnit(charge2, -2.0*elementary_charge)
+        self.assertIs(charge1.unit, elementary_charge)
+        self.assertIs(charge2.unit, elementary_charge)
+
+    def testLCPOForce(self):
+        """ Tests the LCPOForce API features """
+        force = LCPOForce()
+
+        force.setSurfaceTension(10.0*kilocalorie_per_mole/bohr**2)
+        surfaceTension = force.getSurfaceTension()
+        self.assertAlmostEqualUnit(surfaceTension, 10.0*kilocalorie_per_mole/bohr**2)
+        self.assertIs(surfaceTension.unit, kilojoule_per_mole/nanometer**2)
+
+        force.setSurfaceTension(10.0)
+        surfaceTension = force.getSurfaceTension()
+        self.assertAlmostEqualUnit(surfaceTension, 10.0*kilojoule_per_mole/nanometer**2)
+
+        force.addParticle(1.0, 2.0, 3.0, 4.0, 5.0)
+        force.addParticle(6.0*bohr, 7.0, 8.0, 9.0, 10.0/bohr**2)
+        self.assertEqual(force.getNumParticles(), 2)
+
+        radius, p1, p2, p3, p4 = force.getParticleParameters(0)
+        self.assertAlmostEqualUnit(radius, 1.0*nanometer)
+        self.assertEqual(p1, 2.0)
+        self.assertEqual(p2, 3.0)
+        self.assertEqual(p3, 4.0)
+        self.assertAlmostEqualUnit(p4, 5.0/nanometer**2)
+        self.assertIs(radius.unit, nanometer)
+        self.assertIs(p4.unit, nanometer**-2)
+
+        radius, p1, p2, p3, p4 = force.getParticleParameters(1)
+        self.assertAlmostEqualUnit(radius, 6.0*bohr)
+        self.assertEqual(p1, 7.0)
+        self.assertEqual(p2, 8.0)
+        self.assertEqual(p3, 9.0)
+        self.assertAlmostEqualUnit(p4, 10.0/bohr**2)
+        self.assertIs(radius.unit, nanometer)
+        self.assertIs(p4.unit, nanometer**-2)
+
+        force.setParticleParameters(0, 11.0, 12.0, 13.0, 14.0, 15.0)
+        force.setParticleParameters(1, 16.0*bohr, 17.0, 18.0, 19.0, 20.0/bohr**2)
+
+        radius, p1, p2, p3, p4 = force.getParticleParameters(0)
+        self.assertAlmostEqualUnit(radius, 11.0*nanometer)
+        self.assertEqual(p1, 12.0)
+        self.assertEqual(p2, 13.0)
+        self.assertEqual(p3, 14.0)
+        self.assertAlmostEqualUnit(p4, 15.0/nanometer**2)
+
+        radius, p1, p2, p3, p4 = force.getParticleParameters(1)
+        self.assertAlmostEqualUnit(radius, 16.0*bohr)
+        self.assertEqual(p1, 17.0)
+        self.assertEqual(p2, 18.0)
+        self.assertEqual(p3, 19.0)
+        self.assertAlmostEqualUnit(p4, 20.0/bohr**2)
+
+        self.assertFalse(force.usesPeriodicBoundaryConditions())
+        force.setUsesPeriodicBoundaryConditions(True)
+        self.assertTrue(force.usesPeriodicBoundaryConditions())
+        force.setUsesPeriodicBoundaryConditions(False)
+        self.assertFalse(force.usesPeriodicBoundaryConditions())
+
     def testCmapForce(self):
         """ Tests the CMAPTorsionForce API features """
         map1 = [random.random() for i in range(24*24)]
@@ -529,7 +767,21 @@ class TestAPIUnits(unittest.TestCase):
     def testATMForce(self):
         """Tests the ATMForce API features"""
         force = ATMForce(0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.6, 0.8, -1.0);
+
+        #particle 0: fixed displacements, 
         force.addParticle(Vec3(1, 2, 3), Vec3(4, 5, 6))
+
+        #particle 1: fixed displacements using a Transformation object
+        p = force.addParticle()
+        force.setParticleTransformation(p, FixedDisplacement(Vec3(7, 8, 9), Vec3(10, 11, 12)))
+
+        #particle 2: particle distance displacement 
+        p = force.addParticle()
+        force.setParticleTransformation(p, ParticleOffsetDisplacement(1, 0))
+
+        #particle 3: stationary particle
+        force.addParticle()
+
         self.assertEqual(0.1, force.getGlobalParameterDefaultValue(0))
         self.assertEqual(0.2, force.getGlobalParameterDefaultValue(1))
         self.assertEqual(0.3, force.getGlobalParameterDefaultValue(2))
@@ -539,9 +791,31 @@ class TestAPIUnits(unittest.TestCase):
         self.assertEqual(0.6, force.getGlobalParameterDefaultValue(6))
         self.assertEqual(0.8, force.getGlobalParameterDefaultValue(7))
         self.assertEqual(-1.0, force.getGlobalParameterDefaultValue(8))
+
         d1, d0 = force.getParticleParameters(0)
         self.assertEqual(Vec3(1, 2, 3)*nanometers, d1)
         self.assertEqual(Vec3(4, 5, 6)*nanometers, d0)
+
+        fixed_displacement_transformation = force.getParticleTransformation(1)
+        d1 = fixed_displacement_transformation.getFixedDisplacement1()
+        d0 = fixed_displacement_transformation.getFixedDisplacement0()
+        self.assertEqual(Vec3(7, 8, 9)*nanometers, d1)
+        self.assertEqual(Vec3(10, 11, 12)*nanometers, d0)
+
+        vectordistance_displacement_transformation = force.getParticleTransformation(2)
+        j1 = vectordistance_displacement_transformation.getDestinationParticle1()
+        i1 = vectordistance_displacement_transformation.getOriginParticle1()
+        j0 = vectordistance_displacement_transformation.getDestinationParticle0()
+        i0 = vectordistance_displacement_transformation.getOriginParticle0()
+        self.assertEqual( 1, j1)
+        self.assertEqual( 0, i1)
+        self.assertEqual(-1, j0)
+        self.assertEqual(-1, i0)
+
+        transformation = force.getParticleTransformation(3)
+        d1, d0 = force.getParticleParameters(3)
+        self.assertEqual(Vec3(0, 0, 0)*nanometers, d1)
+        self.assertEqual(Vec3(0, 0, 0)*nanometers, d0)
 
     def testDrudeForce(self):
         """ Tests the DrudeForce API features """
@@ -639,14 +913,14 @@ class TestAPIUnits(unittest.TestCase):
 
         self.assertEqual(force.getNumParticles(), 2)
 
-        q, r, s = force.getParticleParameters(0)
+        q, r, s, d, k = force.getParticleParameters(0)
         self.assertAlmostEqualUnit(q, 1.0*coulomb)
         self.assertIs(q.unit, elementary_charge)
         self.assertEqual(r, 1.0*angstroms)
         self.assertIs(r.unit, nanometer)
         self.assertEqual(s, 0.5)
 
-        q, r, s = force.getParticleParameters(1)
+        q, r, s, d, k = force.getParticleParameters(1)
         self.assertAlmostEqualUnit(q, 1.0*elementary_charge)
         self.assertIs(q.unit, elementary_charge)
         self.assertEqual(r, 1.0*nanometer)
@@ -759,44 +1033,47 @@ class TestAPIUnits(unittest.TestCase):
 
         self.assertEqual(force.getNumParticles(), 3)
 
-        p, sig, eps, scale, alchemical, type = force.getParticleParameters(0)
+        p, sig, eps, reduction, alchemical, type, scale = force.getParticleParameters(0)
         self.assertEqual(p, 0)
         self.assertEqual(sig, 0.1*nanometers)
         self.assertIs(sig.unit, nanometers)
         self.assertEqual(eps, 1.0*kilojoules_per_mole)
         self.assertIs(eps.unit, kilojoules_per_mole)
-        self.assertEqual(scale, 1.0)
+        self.assertEqual(reduction, 1.0)
         self.assertEqual(type, -1)
+        self.assertEqual(scale, 1.0)
 
-        p, sig, eps, scale, alchemical, type = force.getParticleParameters(1)
+        p, sig, eps, reduction, alchemical, type, scale = force.getParticleParameters(1)
         self.assertEqual(p, 1)
         self.assertEqual(sig, 1.0*angstroms)
         self.assertIs(sig.unit, nanometers)
         self.assertEqual(eps, 1.0*kilocalories_per_mole)
         self.assertIs(eps.unit, kilojoules_per_mole)
-        self.assertEqual(scale, 0.5)
+        self.assertEqual(reduction, 0.5)
         self.assertEqual(type, -1)
+        self.assertEqual(scale, 1.0)
 
-        p, sig, eps, scale, alchemical, type = force.getParticleParameters(2)
+        p, sig, eps, reduction, alchemical, type, scale = force.getParticleParameters(2)
         self.assertEqual(p, 1)
         self.assertAlmostEqualUnit(sig, 0.8*angstroms)
         self.assertIs(sig.unit, nanometers)
         self.assertEqual(eps, 2.0*kilocalories_per_mole)
         self.assertIs(eps.unit, kilojoules_per_mole)
-        self.assertEqual(scale, 0.25)
+        self.assertEqual(reduction, 0.25)
         self.assertEqual(type, -1)
+        self.assertEqual(scale, 1.0)
 
     def testAmoebaWcaDispersionForce(self):
         """ Tests the AmoebaWcaDispersionForce API features """
         force = AmoebaWcaDispersionForce()
 
-        self.assertEqual(force.getDispoff(), 0.26*nanometer)
-        self.assertEqual(force.getAwater(), 0.033428*nanometer**-3)
-        self.assertEqual(force.getEpsh(), 0.0135*kilojoule_per_mole)
-        self.assertEqual(force.getEpso(), 0.11*kilojoule_per_mole)
-        self.assertEqual(force.getRminh(), 1.3275*nanometer)
-        self.assertEqual(force.getRmino(), 1.7025*nanometer)
-        self.assertEqual(force.getShctd(), 0.81)
+        self.assertEqual(force.getDispoff(), 0.1056*nanometer)
+        self.assertEqual(force.getAwater(), 33.428*nanometer**-3)
+        self.assertEqual(force.getEpsh(), 0.056484*kilojoule_per_mole)
+        self.assertEqual(force.getEpso(), 0.46024000000000004*kilojoule_per_mole)
+        self.assertEqual(force.getRminh(), 0.13275*nanometer)
+        self.assertEqual(force.getRmino(), 0.17025*nanometer)
+        self.assertEqual(force.getShctd(), 0.82)
         self.assertEqual(force.getSlevy(), 1.0)
 
         force.setDispoff(3*angstroms)
@@ -981,7 +1258,7 @@ class TestAPIUnits(unittest.TestCase):
         integrator.setRelativeCollisionFrequency(0.1/picosecond)
         self.assertEqual(integrator.getRelativeCollisionFrequency(), 0.1/picosecond)
 
-        # Test bare consructor and addThermostat
+        # Test bare constructor and addThermostat
         integrator = NoseHooverIntegrator(1*femtosecond)
         self.assertEqual(integrator.getStepSize(), 1*femtosecond)
 
@@ -1023,8 +1300,31 @@ class TestAPIUnits(unittest.TestCase):
         self.assertEqual(force.getDefaultTemperature(), 298.15*kelvin)
         self.assertAlmostEqualUnit(force.getDefaultCollisionFrequency(), 1/picosecond)
 
-    def testMonteCarloMembraneBarostat(self):
-        """ Tests the MonteCarloMembraneBarostat API features """
+    def testMonteCarloBarostat(self):
+        """ Tests the various Monte Carlo barostats API features """
+        def checkPressureUnits(force):
+            system = System()
+            system.addParticle(0.0)
+            system.addForce(force)
+            bonds = HarmonicBondForce()
+            bonds.setUsesPeriodicBoundaryConditions(True)
+            system.addForce(bonds)
+            context = Context(system, VerletIntegrator(0.001))
+            context.setPositions([Vec3(0, 0, 0)])
+            pressure = force.computeCurrentPressure(context)
+            self.assertTrue(is_quantity(pressure))
+            self.assertTrue(pressure.unit == bar)
+
+        force = MonteCarloBarostat(1.1*bar, 350*kelvin)
+        self.assertEqual(force.getDefaultPressure(), 1.1*bar)
+        self.assertEqual(force.getDefaultTemperature(), 350*kelvin)
+        checkPressureUnits(force)
+
+        force = MonteCarloFlexibleBarostat(1.1*bar, 350*kelvin)
+        self.assertEqual(force.getDefaultPressure(), 1.1*bar)
+        self.assertEqual(force.getDefaultTemperature(), 350*kelvin)
+        checkPressureUnits(force)
+
         force = MonteCarloMembraneBarostat(1.0, 1.5, 300, MonteCarloMembraneBarostat.XYAnisotropic, MonteCarloMembraneBarostat.ZFixed, 25)
         self.assertEqual(force.getDefaultPressure(), 1.0*bar)
         self.assertEqual(force.getDefaultSurfaceTension(), 1.5*bar*nanometer)
@@ -1032,6 +1332,7 @@ class TestAPIUnits(unittest.TestCase):
         self.assertEqual(force.getXYMode(), MonteCarloMembraneBarostat.XYAnisotropic)
         self.assertEqual(force.getZMode(), MonteCarloMembraneBarostat.ZFixed)
         self.assertEqual(force.getFrequency(), 25)
+        checkPressureUnits(force)
 
         force = MonteCarloMembraneBarostat(1.1*bar, 2.0*bar*nanometer, 350*kelvin, MonteCarloMembraneBarostat.XYAnisotropic, MonteCarloMembraneBarostat.ZFixed, 25)
         self.assertEqual(force.getDefaultPressure(), 1.1*bar)
@@ -1044,6 +1345,11 @@ class TestAPIUnits(unittest.TestCase):
         self.assertEqual(force.getDefaultPressure(), 1.2*bar)
         self.assertEqual(force.getDefaultSurfaceTension(), 2.5*bar*nanometer)
         self.assertEqual(force.getDefaultTemperature(), 298.15*kelvin)
+
+        force = MonteCarloAnisotropicBarostat(Vec3(1.1, 2.2, 3.3)*bar, 350*kelvin)
+        self.assertEqual(force.getDefaultPressure(), Vec3(1.1, 2.2, 3.3)*bar)
+        self.assertEqual(force.getDefaultTemperature(), 350*kelvin)
+        checkPressureUnits(force)
 
     def testDrudeSCFIntegrator(self):
         """ Tests the DrudeSCFIntegrator API features """
@@ -1085,6 +1391,23 @@ class TestAPIUnits(unittest.TestCase):
 
         integrator = CustomIntegrator(1.0*femtoseconds)
         self.assertEqual(integrator.getStepSize(), 1.0*femtoseconds)
+
+    def testQTBIntegrator(self):
+        """ Tests the LangevinIntegrator API features """
+        integrator = QTBIntegrator(300, 0.1, 0.001)
+        self.assertEqual(integrator.getTemperature(), 300*kelvin)
+        self.assertEqual(integrator.getFriction(), 0.1/picosecond)
+        self.assertEqual(integrator.getStepSize(), 0.001*picosecond)
+
+        integrator = QTBIntegrator(300*kelvin, 0.1/microsecond, 1*femtosecond)
+        self.assertEqual(integrator.getTemperature(), 300*kelvin)
+        self.assertAlmostEqualUnit(integrator.getFriction(), 0.1/microsecond)
+        self.assertEqual(integrator.getStepSize(), 1*femtosecond)
+
+        integrator.setSegmentLength(0.5)
+        self.assertEqual(integrator.getSegmentLength(), 0.5*picosecond)
+        integrator.setSegmentLength(100*femtosecond)
+        self.assertEqual(integrator.getSegmentLength(), 0.1*picosecond)
 
 if __name__ == '__main__':
     unittest.main()

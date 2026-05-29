@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2012-2022 Stanford University and the Authors.      *
  * Portions copyright (c) 2020-2023 Advanced Micro Devices, Inc.              *
@@ -42,7 +40,7 @@ HipArray::HipArray(HipContext& context, size_t size, int elementSize, const std:
 }
 
 HipArray::~HipArray() {
-    if (pointer != 0 && ownsMemory && context->getContextIsValid()) {
+    if (pointer != 0 && ownsMemory) {
         ContextSelector selector(*context);
         hipError_t result = hipFree(pointer);
         if (result != hipSuccess) {

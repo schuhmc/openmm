@@ -13,7 +13,7 @@ from . import version
 
 if sys.platform == 'win32':
     _path = os.environ['PATH']
-    os.environ['PATH'] = '%(lib)s;%(lib)s\plugins;%(path)s' % {
+    os.environ['PATH'] = r'%(lib)s;%(lib)s\plugins;%(path)s' % {
         'lib': version.openmm_library_path, 'path': _path}
     try:
         with os.add_dll_directory(version.openmm_library_path):
@@ -39,3 +39,5 @@ __version__ = Platform.getOpenMMVersion()
 class OpenMMException(Exception):
     """This is the class used for all exceptions thrown by the C++ library."""
     pass
+
+registerPythonForceProxy()

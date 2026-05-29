@@ -1,12 +1,10 @@
 """
-pdbstructure.py: Used for managing PDB formated files.
+pdbstructure.py: Used for managing PDB formatted files.
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
-Portions copyright (c) 2012-2021 Stanford University and the Authors.
+Portions copyright (c) 2012-2026 Stanford University and the Authors.
 Authors: Christopher M. Bruns
 Contributors: Peter Eastman
 
@@ -155,11 +153,14 @@ class PdbStructure(object):
     def _load(self, input_stream):
         self._reset_atom_numbers()
         self._reset_residue_numbers()
+        skip_remaining_models = False
         # Read one line at a time
         for pdb_line in input_stream:
             if not isinstance(pdb_line, str):
                 pdb_line = pdb_line.decode('utf-8')
             command = pdb_line[:6]
+            if skip_remaining_models and command != "CONECT":
+                continue
             # Look for atoms
             if command == "ATOM  " or command == "HETATM":
                 self._add_atom(Atom(pdb_line, self, self.extraParticleIdentifier))
@@ -181,7 +182,7 @@ class PdbStructure(object):
             elif command == "ENDMDL":
                 self._current_model._finalize()
                 if not self.load_all_models:
-                    break
+                    skip_remaining_models = True
             elif pdb_line[:3] == "END":
                 self._current_model._finalize()
                 if not self.load_all_models:
@@ -892,7 +893,7 @@ class Atom(object):
         if alternate_location_indicator is None:
             alternate_location_indicator = self.alternate_location_indicator
         # produce PDB line in three parts: names, numbers, and end
-        # Accomodate 4-character residue names that use column 21
+        # Accommodate 4-character residue names that use column 21
         long_res_name = self.residue_name_with_spaces
         if len(long_res_name) == 3:
             long_res_name += " "
@@ -1075,7 +1076,7 @@ if __name__=='__main__':
             subdir = "ae"
             full_subdir = os.path.join(pdb_dir, subdir)
             for pdb_file in os.listdir(full_subdir):
-                if not re.match("pdb.%2s.\.ent\.gz" % subdir , pdb_file):
+                if not re.match(r"pdb.%2s.\.ent\.gz" % subdir , pdb_file):
                     continue
                 full_pdb_file = os.path.join(full_subdir, pdb_file)
                 parse_one_pdb(full_pdb_file)
@@ -1086,7 +1087,7 @@ if __name__=='__main__':
                 if not os.path.isdir(full_subdir):
                     continue
                 for pdb_file in os.listdir(full_subdir):
-                    if not re.match("pdb.%2s.\.ent\.gz" % subdir , pdb_file):
+                    if not re.match(r"pdb.%2s.\.ent\.gz" % subdir , pdb_file):
                         continue
                     full_pdb_file = os.path.join(full_subdir, pdb_file)
                     parse_one_pdb(full_pdb_file)

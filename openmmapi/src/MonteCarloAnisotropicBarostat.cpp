@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2010-2021 Stanford University and the Authors.      *
+ * Portions copyright (c) 2010-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -34,8 +32,8 @@
 
 using namespace OpenMM;
 
-MonteCarloAnisotropicBarostat::MonteCarloAnisotropicBarostat(const Vec3& defaultPressure, double defaultTemperature, bool scaleX, bool scaleY, bool scaleZ, int frequency) :
-        scaleX(scaleX), scaleY(scaleY), scaleZ(scaleZ) {
+MonteCarloAnisotropicBarostat::MonteCarloAnisotropicBarostat(const Vec3& defaultPressure, double defaultTemperature, bool scaleX, bool scaleY, bool scaleZ, int frequency, bool scaleMoleculesAsRigid) :
+        scaleX(scaleX), scaleY(scaleY), scaleZ(scaleZ), scaleMoleculesAsRigid(scaleMoleculesAsRigid) {
     setDefaultPressure(defaultPressure);
     setDefaultTemperature(defaultTemperature);
     setFrequency(frequency);
@@ -60,4 +58,8 @@ void MonteCarloAnisotropicBarostat::setDefaultTemperature(double temp) {
 
 ForceImpl* MonteCarloAnisotropicBarostat::createImpl() const {
     return new MonteCarloAnisotropicBarostatImpl(*this);
+}
+
+Vec3 MonteCarloAnisotropicBarostat::computeCurrentPressure(Context& context) const {
+    return dynamic_cast<MonteCarloAnisotropicBarostatImpl&>(getImplInContext(context)).computeCurrentPressure(getContextImpl(context));
 }

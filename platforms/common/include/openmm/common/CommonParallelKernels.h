@@ -4,12 +4,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2011-2024 Stanford University and the Authors.      *
+ * Portions copyright (c) 2011-2025 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -29,6 +27,9 @@
 
 #include "openmm/common/ComputeContext.h"
 #include "openmm/common/CommonKernels.h"
+#include "openmm/common/CommonCalcCustomHbondForceKernel.h"
+#include "openmm/common/CommonCalcCustomManyParticleForceKernel.h"
+#include "openmm/common/CommonCalcCustomNonbondedForceKernel.h"
 
 namespace OpenMM {
 

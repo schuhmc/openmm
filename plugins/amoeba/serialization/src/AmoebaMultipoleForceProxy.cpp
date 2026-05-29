@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                OpenMMAmoeba                                *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -158,7 +156,7 @@ void* AmoebaMultipoleForceProxy::deserialize(const SerializationNode& node) cons
             for (int i = 0; ; i++) {
                 stringstream key;
                 key << "c" << i;
-                if (coefficients.getProperties().find(key.str()) == coefficients.getProperties().end())
+                if (!coefficients.hasProperty(key.str()))
                     break;
                 coeff.push_back(coefficients.getDoubleProperty(key.str()));
             }

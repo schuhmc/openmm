@@ -1,10 +1,8 @@
 """
 A recreation of the various GB variants implemented via CustomGBForce
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
 Portions copyright (c) 2012-2022 University of Virginia and the Authors.
 Authors: Christoph Klein, Michael R. Shirts
@@ -373,6 +371,9 @@ def _createEnergyTerms(force, solventDielectric, soluteDielectric, SA, cutoff, k
                 CustomGBForce.SingleParticle)
     if SA=='ACE':
         force.addEnergyTerm("28.3919551*(radius+0.14)^2*(radius/B)^6; radius=or+offset"+params, CustomGBForce.SingleParticle)
+    elif SA=='LCPO':
+        # Handled by caller
+        pass
     elif SA is not None:
         raise ValueError('Unknown surface area method: '+SA)
     if cutoff is None:

@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2010-2023 Stanford University and the Authors.      *
+ * Portions copyright (c) 2010-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman, Lee-Ping Wang                                      *
  * Contributors:                                                              *
  *                                                                            *
@@ -50,7 +48,7 @@ void MonteCarloAnisotropicBarostatImpl::initialize(ContextImpl& context) {
     if (!context.getSystem().usesPeriodicBoundaryConditions())
         throw OpenMMException("A barostat cannot be used with a non-periodic system");
     kernel = context.getPlatform().createKernel(ApplyMonteCarloBarostatKernel::Name(), context);
-    kernel.getAs<ApplyMonteCarloBarostatKernel>().initialize(context.getSystem(), owner);
+    kernel.getAs<ApplyMonteCarloBarostatKernel>().initialize(context.getSystem(), owner, 3, owner.getScaleMoleculesAsRigid());
     Vec3 box[3];
     context.getPeriodicBoxVectors(box[0], box[1], box[2]);
     double volume = box[0][0]*box[1][1]*box[2][2];
@@ -114,10 +112,15 @@ void MonteCarloAnisotropicBarostatImpl::updateContextState(ContextImpl& context,
     kernel.getAs<ApplyMonteCarloBarostatKernel>().scaleCoordinates(context, lengthScale[0], lengthScale[1], lengthScale[2]);
 
     // Compute the energy of the modified system.
-    
+
+    double numberOfScaledParticles;
+    if (owner.getScaleMoleculesAsRigid())
+        numberOfScaledParticles = context.getMolecules().size();
+    else
+        numberOfScaledParticles = context.getSystem().getNumParticles();
     double finalEnergy = context.getOwner().getState(State::Energy, false, groups).getPotentialEnergy();
     double kT = BOLTZ*context.getParameter(MonteCarloAnisotropicBarostat::Temperature());
-    double w = finalEnergy-initialEnergy + pressure*deltaVolume - context.getMolecules().size()*kT*log(newVolume/volume);
+    double w = finalEnergy-initialEnergy + pressure*deltaVolume - numberOfScaledParticles*kT*log(newVolume/volume);
     if (w > 0 && SimTKOpenMMUtilities::getUniformlyDistributedRandomNumber() > exp(-w/kT)) {
         // Reject the step.
         
@@ -144,17 +147,59 @@ void MonteCarloAnisotropicBarostatImpl::updateContextState(ContextImpl& context,
 }
 
 map<string, double> MonteCarloAnisotropicBarostatImpl::getDefaultParameters() {
-    map<string, double> parameters;
-    parameters[MonteCarloAnisotropicBarostat::PressureX()] = getOwner().getDefaultPressure()[0];
-    parameters[MonteCarloAnisotropicBarostat::PressureY()] = getOwner().getDefaultPressure()[1];
-    parameters[MonteCarloAnisotropicBarostat::PressureZ()] = getOwner().getDefaultPressure()[2];
-    parameters[MonteCarloAnisotropicBarostat::Temperature()] = getOwner().getDefaultTemperature();
-    return parameters;
+    return {{MonteCarloAnisotropicBarostat::PressureX(), getOwner().getDefaultPressure()[0]},
+            {MonteCarloAnisotropicBarostat::PressureY(), getOwner().getDefaultPressure()[1]},
+            {MonteCarloAnisotropicBarostat::PressureZ(), getOwner().getDefaultPressure()[2]},
+            {MonteCarloAnisotropicBarostat::Temperature(), getOwner().getDefaultTemperature()}};
 }
 
 vector<string> MonteCarloAnisotropicBarostatImpl::getKernelNames() {
-    vector<string> names;
-    names.push_back(ApplyMonteCarloBarostatKernel::Name());
-    return names;
+    return {ApplyMonteCarloBarostatKernel::Name()};
 }
 
+Vec3 MonteCarloAnisotropicBarostatImpl::computeCurrentPressure(ContextImpl& context) {
+    Vec3 box[3];
+    context.getPeriodicBoxVectors(box[0], box[1], box[2]);
+    double volume = box[0][0]*box[1][1]*box[2][2];
+    double delta = 1e-3;
+    int groups = context.getIntegrator().getIntegrationForceGroups();
+    kernel.getAs<ApplyMonteCarloBarostatKernel>().saveCoordinates(context);
+    vector<double> ke;
+    kernel.getAs<ApplyMonteCarloBarostatKernel>().computeKineticEnergy(context, ke);
+    double deltaVolume = volume*2*delta;
+    Vec3 pressure;
+
+    // Compute the pressure along each axis.
+
+    for (int axis = 0; axis < 3; axis++) {
+        // Compute the first energy.
+
+        Vec3 scale1(1, 1, 1);
+        scale1[axis] = 1.0+delta;
+        context.getOwner().setPeriodicBoxVectors(box[0]*scale1[0], box[1]*scale1[1], box[2]*scale1[2]);
+        kernel.getAs<ApplyMonteCarloBarostatKernel>().scaleCoordinates(context, scale1[0], scale1[1], scale1[2]);
+        double energy1 = context.getOwner().getState(State::Energy, false, groups).getPotentialEnergy();
+
+        // Compute the second energy.
+
+        Vec3 scale2(1, 1, 1);
+        scale2[axis] = 1.0-delta;
+        context.getOwner().setPeriodicBoxVectors(box[0]*scale2[0], box[1]*scale2[1], box[2]*scale2[2]);
+        kernel.getAs<ApplyMonteCarloBarostatKernel>().scaleCoordinates(context, scale2[0]/scale1[0], scale2[1]/scale1[1], scale2[2]/scale1[2]);
+        double energy2 = context.getOwner().getState(State::Energy, false, groups).getPotentialEnergy();
+
+        // Reset the box shape.
+
+        context.getOwner().setPeriodicBoxVectors(box[0], box[1], box[2]);
+        kernel.getAs<ApplyMonteCarloBarostatKernel>().scaleCoordinates(context, 1/scale2[0], 1/scale2[1], 1/scale2[2]);
+
+        // Compute the pressure.
+
+        pressure[axis] = (2.0*ke[axis]/volume - (energy1-energy2)/deltaVolume)/(AVOGADRO*1e-25);
+    }
+
+    // Restore the context to its original state.
+
+    kernel.getAs<ApplyMonteCarloBarostatKernel>().restoreCoordinates(context);
+    return pressure;
+}

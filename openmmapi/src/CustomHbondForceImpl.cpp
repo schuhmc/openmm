@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2008-2018 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -187,9 +185,7 @@ double CustomHbondForceImpl::calcForcesAndEnergy(ContextImpl& context, bool incl
 }
 
 vector<string> CustomHbondForceImpl::getKernelNames() {
-    vector<string> names;
-    names.push_back(CalcCustomHbondForceKernel::Name());
-    return names;
+    return {CalcCustomHbondForceKernel::Name()};
 }
 
 map<string, double> CustomHbondForceImpl::getDefaultParameters() {

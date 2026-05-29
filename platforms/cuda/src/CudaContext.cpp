@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2009-2024 Stanford University and the Authors.      *
+ * Portions copyright (c) 2009-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -32,11 +30,13 @@
 #include "CudaArray.h"
 #include "CudaBondedUtilities.h"
 #include "CudaEvent.h"
+#include "CudaFFT3D.h"
 #include "CudaIntegrationUtilities.h"
 #include "CudaKernels.h"
 #include "CudaKernelSources.h"
 #include "CudaNonbondedUtilities.h"
 #include "CudaProgram.h"
+#include "CudaSort.h"
 #include "openmm/common/ComputeArray.h"
 #include "openmm/common/ContextSelector.h"
 #include "SHA1.h"
@@ -84,14 +84,11 @@ const int CudaContext::TileSize = sizeof(tileflags)*8;
 bool CudaContext::hasInitializedCuda = false;
 
 CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlockingSync, const string& precision, const string& tempDir, CudaPlatform::PlatformData& platformData,
-        CudaContext* originalContext) : ComputeContext(system), currentStream(0), platformData(platformData), contextIsValid(false), hasAssignedPosqCharges(false),
+        CudaContext* originalContext) : ComputeContext(system), platformData(platformData), contextIsValid(false), hasAssignedPosqCharges(false),
         pinnedBuffer(NULL), integration(NULL), expression(NULL), bonded(NULL), nonbonded(NULL), useBlockingSync(useBlockingSync) {
     int cudaDriverVersion;
     cuDriverGetVersion(&cudaDriverVersion);
-    if (!hasInitializedCuda) {
-        CHECK_RESULT2(cuInit(0), "Error initializing CUDA");
-        hasInitializedCuda = true;
-    }
+    ensureCudaInitialized();
     if (precision == "single") {
         useDoublePrecision = false;
         useMixedPrecision = false;
@@ -142,7 +139,13 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
             else
                 flags += CU_CTX_SCHED_SPIN;
 
-            if (cuCtxCreate(&context, flags, device) == CUDA_SUCCESS) {
+#if CUDA_VERSION < 13000
+            CUresult result = cuCtxCreate(&context, flags, device);
+#else
+            CUctxCreateParams params = {};
+            CUresult result = cuCtxCreate(&context, &params, flags, device);
+#endif
+            if (result == CUDA_SUCCESS) {
                 this->deviceIndex = trialDeviceIndex;
                 CUcontext popped;
                 cuCtxPopCurrent(&popped);
@@ -189,7 +192,7 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
     contextIsValid = true;
     ContextSelector selector(*this);
     CHECK_RESULT(cuCtxSetCacheConfig(CU_FUNC_CACHE_PREFER_SHARED));
-    if (contextIndex > 0) {
+    if (contextIndex > 0 && originalContext == NULL) {
         int canAccess;
         cuDeviceCanAccessPeer(&canAccess, getDevice(), platformData.contexts[0]->getDevice());
         if (canAccess) {
@@ -200,6 +203,8 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
             CHECK_RESULT(cuCtxEnablePeerAccess(platformData.contexts[0]->getContext(), 0));
         }
     }
+    defaultQueue = shared_ptr<ComputeQueueImpl>(new CudaQueue(0));
+    currentQueue = defaultQueue;
     numAtoms = system.getNumParticles();
     paddedNumAtoms = TileSize*((numAtoms+TileSize-1)/TileSize);
     numAtomBlocks = (paddedNumAtoms+(TileSize-1))/TileSize;
@@ -285,6 +290,8 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
     compilationDefines["ATAN"] = useDoublePrecision ? "atan" : "atanf";
     compilationDefines["ERF"] = useDoublePrecision ? "erf" : "erff";
     compilationDefines["ERFC"] = useDoublePrecision ? "erfc" : "erfcf";
+    compilationDefines["FMA"] = useDoublePrecision ? "fma" : "fmaf";
+    compilationDefines["FABS"] = useDoublePrecision ? "fabs" : "fabsf";
 
     // Set defines for applying periodic boundary conditions.
 
@@ -355,6 +362,7 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
     nonbonded = new CudaNonbondedUtilities(*this);
     integration = new CudaIntegrationUtilities(*this, system);
     expression = new CudaExpressionUtilities(*this);
+    clearBuffer(posq);
 }
 
 CudaContext::~CudaContext() {
@@ -437,6 +445,10 @@ void CudaContext::initializeContexts() {
     getPlatformData().initializeContexts(system);
 }
 
+FFT3D CudaContext::createFFT(int xsize, int ysize, int zsize, bool realToComplex) {
+    return FFT3D(new CudaFFT3D(*this, xsize, ysize, zsize, realToComplex));
+}
+
 void CudaContext::setAsCurrent() {
     if (contextIsValid)
         cuCtxSetCurrent(context);
@@ -449,8 +461,11 @@ void CudaContext::pushAsCurrent() {
 
 void CudaContext::popAsCurrent() {
     CUcontext popped;
-    if (contextIsValid)
+    if (contextIsValid) {
         cuCtxPopCurrent(&popped);
+        if (popped != context)
+            throw OpenMMException("Called popAsCurrent() on a context that is not current");
+    }
 }
 
 CUmodule CudaContext::createModule(const string source, const char* optimizationFlags) {
@@ -547,11 +562,7 @@ CUmodule CudaContext::createModule(const string source, const map<string, string
 
     stringstream tempFileName;
     tempFileName << "openmmTempKernel" << this; // Include a pointer to this context as part of the filename to avoid collisions.
-#ifdef WIN32
-    tempFileName << "_" << GetCurrentProcessId();
-#else
-    tempFileName << "_" << getpid();
-#endif
+    tempFileName << "_" << this_thread::get_id();
     string outputFile = (tempDir+tempFileName.str()+".ptx");
 
     // Split the command line flags into an array of options.
@@ -649,16 +660,12 @@ double& CudaContext::getEnergyWorkspace() {
     return platformData.contextEnergy[contextIndex];
 }
 
+ComputeQueue CudaContext::createQueue() {
+    return shared_ptr<ComputeQueueImpl>(new CudaQueue());
+}
+
 CUstream CudaContext::getCurrentStream() {
-    return currentStream;
-}
-
-void CudaContext::setCurrentStream(CUstream stream) {
-    currentStream = stream;
-}
-
-void CudaContext::restoreDefaultStream() {
-    setCurrentStream(0);
+    return dynamic_cast<CudaQueue*>(currentQueue.get())->getStream();
 }
 
 CudaArray* CudaContext::createArray() {
@@ -667,6 +674,10 @@ CudaArray* CudaContext::createArray() {
 
 ComputeEvent CudaContext::createEvent() {
     return shared_ptr<ComputeEventImpl>(new CudaEvent(*this));
+}
+
+ComputeSort CudaContext::createSort(ComputeSortImpl::SortTrait* trait, unsigned int length, bool uniform) {
+    return shared_ptr<ComputeSortImpl>(new CudaSort(*this, trait, length, uniform));
 }
 
 ComputeProgram CudaContext::compileProgram(const std::string source, const std::map<std::string, std::string>& defines) {
@@ -697,7 +708,7 @@ void CudaContext::executeKernel(CUfunction kernel, void** arguments, int threads
     if (blockSize == -1)
         blockSize = ThreadBlockSize;
     int gridSize = std::min((threads+blockSize-1)/blockSize, numThreadBlocks);
-    CUresult result = cuLaunchKernel(kernel, gridSize, 1, 1, blockSize, 1, 1, sharedSize, currentStream, arguments, NULL);
+    CUresult result = cuLaunchKernel(kernel, gridSize, 1, 1, blockSize, 1, 1, sharedSize, getCurrentStream(), arguments, NULL);
     if (result != CUDA_SUCCESS) {
         stringstream str;
         str<<"Error invoking kernel: "<<getErrorString(result)<<" ("<<result<<")";
@@ -871,4 +882,11 @@ unsigned int CudaContext::getEventFlags() {
     if (useBlockingSync)
         flags += CU_EVENT_BLOCKING_SYNC;
     return flags;
+}
+
+void CudaContext::ensureCudaInitialized() {
+    if (!hasInitializedCuda) {
+        CHECK_RESULT2(cuInit(0), "Error initializing CUDA");
+        hasInitializedCuda = true;
+    }
 }

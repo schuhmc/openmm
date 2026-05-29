@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                               OpenMMAmoeba                                 *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2008-2022 Stanford University and the Authors.      *
  * Authors:                                                                   *
@@ -55,9 +53,9 @@ void AmoebaVdwForceImpl::initialize(ContextImpl& context) {
         throw OpenMMException("AmoebaVdwForce must have exactly as many particles as the System it belongs to.");
     for (int i = 0; i < owner.getNumParticles(); i++) {
         int parentIndex, typeIndex;
-        double sigma, epsilon, reductionFactor;
+        double sigma, epsilon, reductionFactor, scaleFactor;
         bool isAlchemical;
-        owner.getParticleParameters(i, parentIndex, sigma, epsilon, reductionFactor, isAlchemical, typeIndex);
+        owner.getParticleParameters(i, parentIndex, sigma, epsilon, reductionFactor, isAlchemical, typeIndex, scaleFactor);
         if (sigma < 0)
             throw OpenMMException("AmoebaVdwForce: sigma for a particle cannot be negative");
         if (owner.getPotentialFunction() == AmoebaVdwForce::Buffered147 && sigma == 0)
@@ -101,11 +99,11 @@ void AmoebaVdwForceImpl::createParameterMatrix(const AmoebaVdwForce& force, vect
     if (force.getUseParticleTypes()) {
         // We get the types directly from the particles.
 
-        double sigma, epsilon, reduction;
+        double sigma, epsilon, reduction, scaleFactor;
         int parent;
         bool isAlchemical;
         for (int i = 0; i < numParticles; i++)
-            force.getParticleParameters(i, parent, sigma, epsilon, reduction, isAlchemical, type[i]);
+            force.getParticleParameters(i, parent, sigma, epsilon, reduction, isAlchemical, type[i], scaleFactor);
         numTypes = force.getNumParticleTypes();
         typeSigma.resize(numTypes);
         typeEpsilon.resize(numTypes);
@@ -117,10 +115,10 @@ void AmoebaVdwForceImpl::createParameterMatrix(const AmoebaVdwForce& force, vect
 
         map<pair<double, double>, int> typeForParams;
         for (int i = 0; i < numParticles; i++) {
-            double sigma, epsilon, reduction;
+            double sigma, epsilon, reduction, scaleFactor;
             int parent, typeIndex;
             bool isAlchemical;
-            force.getParticleParameters(i, parent, sigma, epsilon, reduction, isAlchemical, typeIndex);
+            force.getParticleParameters(i, parent, sigma, epsilon, reduction, isAlchemical, typeIndex, scaleFactor);
             pair<double, double> params = make_pair(sigma, epsilon);
             map<pair<double, double>, int>::iterator entry = typeForParams.find(params);
             if (entry == typeForParams.end()) {
@@ -247,12 +245,6 @@ double AmoebaVdwForceImpl::calcDispersionCorrection(const System& system, const 
     // Compute the VdW tapering coefficients.  Mostly copied from amoebaCudaGpu.cpp.
     double cutoff = force.getCutoffDistance();
     double vdwTaper = 0.90; // vdwTaper is a scaling factor, it is not a distance.
-    double c0 = 0.0;
-    double c1 = 0.0;
-    double c2 = 0.0;
-    double c3 = 0.0;
-    double c4 = 0.0;
-    double c5 = 0.0;
 
     double vdwCut = cutoff;
     double vdwTaperCut = vdwTaper*cutoff;
@@ -277,12 +269,12 @@ double AmoebaVdwForceImpl::calcDispersionCorrection(const System& system, const 
     double denom2 = denom*denom;
     denom = denom * denom2*denom2;
 
-    c0 = vdwCut * vdwCut2 * (vdwCut2 - 5.0 * vdwCut * vdwTaperCut + 10.0 * vdwTaperCut2) * denom;
-    c1 = -30.0 * vdwCut2 * vdwTaperCut2*denom;
-    c2 = 30.0 * (vdwCut2 * vdwTaperCut + vdwCut * vdwTaperCut2) * denom;
-    c3 = -10.0 * (vdwCut2 + 4.0 * vdwCut * vdwTaperCut + vdwTaperCut2) * denom;
-    c4 = 15.0 * (vdwCut + vdwTaperCut) * denom;
-    c5 = -6.0 * denom;
+    double c0 = vdwCut * vdwCut2 * (vdwCut2 - 5.0 * vdwCut * vdwTaperCut + 10.0 * vdwTaperCut2) * denom;
+    double c1 = -30.0 * vdwCut2 * vdwTaperCut2*denom;
+    double c2 = 30.0 * (vdwCut2 * vdwTaperCut + vdwCut * vdwTaperCut2) * denom;
+    double c3 = -10.0 * (vdwCut2 + 4.0 * vdwCut * vdwTaperCut + vdwTaperCut2) * denom;
+    double c4 = 15.0 * (vdwCut + vdwTaperCut) * denom;
+    double c5 = -6.0 * denom;
 
     // Loop over all pairs of types to compute the coefficient.
     // Copied over from TINKER - numerical integration.
@@ -349,9 +341,7 @@ double AmoebaVdwForceImpl::calcDispersionCorrection(const System& system, const 
 }
 
 std::vector<std::string> AmoebaVdwForceImpl::getKernelNames() {
-    std::vector<std::string> names;
-    names.push_back(CalcAmoebaVdwForceKernel::Name());
-    return names;
+    return {CalcAmoebaVdwForceKernel::Name()};
 }
 
 void AmoebaVdwForceImpl::updateParametersInContext(ContextImpl& context) {

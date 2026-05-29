@@ -4,12 +4,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2010-2021 Stanford University and the Authors       *
+ * Portions copyright (c) 2010-2026 Stanford University and the Authors       *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -101,7 +99,7 @@ public:
     /**
      * Get a map containing all of this node's properties.
      */
-    const std::map<std::string, std::string>& getProperties() const;
+    const std::map<std::string, std::string> getProperties() const;
     /**
      * Determine whether this node has a property with a particular node.
      *
@@ -114,7 +112,7 @@ public:
      *
      * @param name   the name of the property to get
      */
-    const std::string& getStringProperty(const std::string& name) const;
+    const std::string getStringProperty(const std::string& name) const;
     /**
      * Get the property with a particular name, specified as a string.  If there is no property with
      * the specified name, a default value is returned instead.
@@ -122,7 +120,7 @@ public:
      * @param name          the name of the property to get
      * @param defaultValue  the value to return if the specified property does not exist
      */
-    const std::string& getStringProperty(const std::string& name, const std::string& defaultValue) const;
+    const std::string getStringProperty(const std::string& name, const std::string& defaultValue) const;
     /**
      * Set the value of a property, specified as a string.
      *
@@ -263,9 +261,10 @@ public:
         return reinterpret_cast<T*>(SerializationProxy::getProxy(getStringProperty("type")).deserialize(*this));
     }
 private:
+    const char* findPropertyValue(const std::string& name, bool required) const;
     std::string name;
     std::vector<SerializationNode> children;
-    std::map<std::string, std::string> properties;
+    std::string properties;
 };
 
 } // namespace OpenMM

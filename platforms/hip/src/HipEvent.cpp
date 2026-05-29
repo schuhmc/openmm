@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2019 Stanford University and the Authors.           *
+ * Portions copyright (c) 2019-2025 Stanford University and the Authors.      *
  * Portions copyright (c) 2020-2023 Advanced Micro Devices, Inc.              *
  * Authors: Peter Eastman, Nicholas Curtis                                    *
  * Contributors:                                                              *
@@ -26,6 +24,7 @@
  * -------------------------------------------------------------------------- */
 
 #include "HipEvent.h"
+#include "HipQueue.h"
 #include "openmm/OpenMMException.h"
 
 using namespace OpenMM;
@@ -48,4 +47,8 @@ void HipEvent::enqueue() {
 
 void HipEvent::wait() {
     hipEventSynchronize(event);
+}
+
+void HipEvent::queueWait(ComputeQueue queue) {
+    hipStreamWaitEvent(dynamic_cast<HipQueue*>(queue.get())->getStream(), event, 0);
 }

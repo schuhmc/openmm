@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2008-2024 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Portions copyright (c) 2020 Advanced Micro Devices, Inc.                   *
  * Authors: Peter Eastman, Nicholas Curtis                                    *
  * Contributors:                                                              *
@@ -76,6 +74,7 @@ HipPlatform::HipPlatform() {
     registerKernelFactory(UpdateStateDataKernel::Name(), factory);
     registerKernelFactory(ApplyConstraintsKernel::Name(), factory);
     registerKernelFactory(VirtualSitesKernel::Name(), factory);
+    registerKernelFactory(MinimizeKernel::Name(), factory);
     registerKernelFactory(CalcHarmonicBondForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomBondForceKernel::Name(), factory);
     registerKernelFactory(CalcHarmonicAngleForceKernel::Name(), factory);
@@ -85,6 +84,7 @@ HipPlatform::HipPlatform() {
     registerKernelFactory(CalcCMAPTorsionForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomTorsionForceKernel::Name(), factory);
     registerKernelFactory(CalcNonbondedForceKernel::Name(), factory);
+    registerKernelFactory(CalcConstantPotentialForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomNonbondedForceKernel::Name(), factory);
     registerKernelFactory(CalcGBSAOBCForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomGBForceKernel::Name(), factory);
@@ -94,9 +94,13 @@ HipPlatform::HipPlatform() {
     registerKernelFactory(CalcCustomCompoundBondForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomCPPForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomCVForceKernel::Name(), factory);
+    registerKernelFactory(CalcOrientationRestraintForceKernel::Name(), factory);
+    registerKernelFactory(CalcPythonForceKernel::Name(), factory);
+    registerKernelFactory(CalcRGForceKernel::Name(), factory);
     registerKernelFactory(CalcRMSDForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomManyParticleForceKernel::Name(), factory);
     registerKernelFactory(CalcGayBerneForceKernel::Name(), factory);
+    registerKernelFactory(CalcLCPOForceKernel::Name(), factory);
     registerKernelFactory(IntegrateVerletStepKernel::Name(), factory);
     registerKernelFactory(IntegrateNoseHooverStepKernel::Name(), factory);
     registerKernelFactory(IntegrateLangevinMiddleStepKernel::Name(), factory);
@@ -104,6 +108,8 @@ HipPlatform::HipPlatform() {
     registerKernelFactory(IntegrateVariableVerletStepKernel::Name(), factory);
     registerKernelFactory(IntegrateVariableLangevinStepKernel::Name(), factory);
     registerKernelFactory(IntegrateCustomStepKernel::Name(), factory);
+    registerKernelFactory(IntegrateDPDStepKernel::Name(), factory);
+    registerKernelFactory(IntegrateQTBStepKernel::Name(), factory);
     registerKernelFactory(ApplyAndersenThermostatKernel::Name(), factory);
     registerKernelFactory(ApplyMonteCarloBarostatKernel::Name(), factory);
     registerKernelFactory(RemoveCMMotionKernel::Name(), factory);
@@ -156,6 +162,40 @@ const string& HipPlatform::getPropertyValue(const Context& context, const string
 }
 
 void HipPlatform::setPropertyValue(Context& context, const string& property, const string& value) const {
+}
+
+vector<map<string, string> > HipPlatform::getDevices(const map<string, string>& filters) const {
+    // Check for properties that might act as filters.
+
+    int deviceIndex = -1;
+    if (filters.find(HipDeviceIndex()) != filters.end())
+        stringstream(filters.at(HipDeviceIndex())) >> deviceIndex;
+    string deviceName = (filters.find(HipDeviceName()) == filters.end() ? "" : filters.at(HipDeviceName()));
+
+    // Loop over devices.
+
+    vector<map<string, string> > results;
+    int numDevices;
+    if (hipGetDeviceCount(&numDevices) != hipSuccess)
+        numDevices = 0;
+    for (int i = 0; i < numDevices; i++) {
+        if (deviceIndex != -1 && deviceIndex != i)
+            continue;
+        char name[1000];
+        hipDevice_t device;
+        CHECK_RESULT(hipDeviceGet(&device, i), "Error querying device");
+        CHECK_RESULT(hipDeviceGetName(name, 1000, device), "Error querying device name");
+        stringstream deviceNameStr;
+        deviceNameStr << name;
+        if (deviceName.size() > 0 && deviceName != deviceNameStr.str())
+            continue;
+        stringstream deviceIndexStr;
+        deviceIndexStr << i;
+        map<string, string> properties = {{HipDeviceIndex(), deviceIndexStr.str()},
+                                          {HipDeviceName(), deviceNameStr.str()}};
+        results.push_back(properties);
+    }
+    return results;
 }
 
 void HipPlatform::contextCreated(ContextImpl& context, const map<string, string>& properties) const {

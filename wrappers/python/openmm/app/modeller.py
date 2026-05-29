@@ -1,12 +1,10 @@
 """
 modeller.py: Provides tools for editing molecular models
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
-Portions copyright (c) 2012-2024 Stanford University and the Authors.
+Portions copyright (c) 2012-2026 Stanford University and the Authors.
 Authors: Peter Eastman
 Contributors: 
 
@@ -38,7 +36,7 @@ from openmm.app import Topology, PDBFile, ForceField
 from openmm.app.forcefield import AllBonds, CutoffNonPeriodic, CutoffPeriodic, DrudeGenerator, _getDataDirectories
 from openmm.app.internal import compiled
 from openmm.vec3 import Vec3
-from openmm import System, Context, NonbondedForce, CustomNonbondedForce, HarmonicBondForce, HarmonicAngleForce, VerletIntegrator, LangevinIntegrator, LocalEnergyMinimizer
+from openmm import System, Context, NonbondedForce, AmoebaVdwForce, AmoebaMultipoleForce, CustomNonbondedForce, HarmonicBondForce, HarmonicAngleForce, VerletIntegrator, LangevinIntegrator, LocalEnergyMinimizer
 from openmm.unit import nanometer, molar, elementary_charge, degree, acos, is_quantity, dot, norm, kilojoules_per_mole
 import openmm.unit as unit
 from . import element as elem
@@ -49,7 +47,7 @@ import sys
 import xml.etree.ElementTree as etree
 from copy import deepcopy
 from math import ceil, floor, sqrt
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 class Modeller(object):
     """Modeller provides tools for editing molecular models, such as adding water or missing hydrogens.
@@ -113,7 +111,7 @@ class Modeller(object):
             for residue in chain.residues():
                 newResidue = newTopology.addResidue(residue.name, newChain, residue.id, residue.insertionCode)
                 for atom in residue.atoms():
-                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                     newAtoms[atom] = newAtom
                     newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -127,7 +125,7 @@ class Modeller(object):
             for residue in chain.residues():
                 newResidue = newTopology.addResidue(residue.name, newChain, residue.id, residue.insertionCode)
                 for atom in residue.atoms():
-                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                     newAtoms[atom] = newAtom
                     newPositions.append(deepcopy(addPositions[atom.index]))
         for bond in addTopology.bonds():
@@ -172,7 +170,7 @@ class Modeller(object):
                                 if needNewResidue:
                                     newResidue = newTopology.addResidue(residue.name, newChain, residue.id, residue.insertionCode)
                                     needNewResidue = False;
-                                newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                                newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                                 newAtoms[atom] = newAtom
                                 newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -248,7 +246,7 @@ class Modeller(object):
                 else:
                     # Just copy the residue over.
                     for atom in residue.atoms():
-                        newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                        newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                         newAtoms[atom] = newAtom
                         newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -310,16 +308,20 @@ class Modeller(object):
         # Determine the total charge of the system
         system = forcefield.createSystem(self.topology, residueTemplates=residueTemplates)
         for i in range(system.getNumForces()):
-            if isinstance(system.getForce(i), NonbondedForce):
+            if isinstance(system.getForce(i), (NonbondedForce, AmoebaMultipoleForce)):
                 nonbonded = system.getForce(i)
                 break
         else:
             raise ValueError('The ForceField does not specify a NonbondedForce')
 
         totalCharge = 0.0
-        for i in range(nonbonded.getNumParticles()):
-            nb_i = nonbonded.getParticleParameters(i)
-            totalCharge += nb_i[0].value_in_unit(elementary_charge)
+        if isinstance(nonbonded, AmoebaMultipoleForce):
+            for i in range(nonbonded.getNumMultipoles()):
+                totalCharge += nonbonded.getMultipoleParameters(i)[0].value_in_unit(elementary_charge)
+        else:
+            for i in range(nonbonded.getNumParticles()):
+                totalCharge += nonbonded.getParticleParameters(i)[0].value_in_unit(elementary_charge)
+
         # Round to nearest integer
         totalCharge = int(floor(0.5 + totalCharge))
 
@@ -519,15 +521,18 @@ class Modeller(object):
         system = forcefield.createSystem(self.topology, residueTemplates=residueTemplates)
         nonbonded = None
         for i in range(system.getNumForces()):
-            if isinstance(system.getForce(i), NonbondedForce):
+            if isinstance(system.getForce(i), (NonbondedForce, AmoebaVdwForce)):
                 nonbonded = system.getForce(i)
+      
         if nonbonded is None:
             raise ValueError('The ForceField does not specify a NonbondedForce')
         cutoff = [waterRadius]*system.getNumParticles()
+
         for i in range(system.getNumParticles()):
             params = nonbonded.getParticleParameters(i)
             if params[2] != 0*kilojoules_per_mole:
                 cutoff[i] += params[1].value_in_unit(nanometer)*vdwRadiusPerSigma
+
         waterCutoff = waterRadius
         if len(cutoff) == 0:
             maxCutoff = waterCutoff
@@ -548,7 +553,7 @@ class Modeller(object):
                 if residue in residueTemplates:
                     newResidueTemplates[newResidue] = residueTemplates[residue]
                 for atom in residue.atoms():
-                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                     newAtoms[atom] = newAtom
                     newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -871,6 +876,9 @@ class Modeller(object):
         newResidueTemplates = {}
         newIndices = []
         acceptors = [atom for atom in self.topology.atoms() if atom.element in (elem.oxygen, elem.nitrogen)]
+        positions = self.positions.value_in_unit(nanometer)
+        acceptorPositions = [positions[a.index] for a in acceptors]
+        cells = _CellList(acceptorPositions, 0.35, None, False)
         for chain in self.topology.chains():
             newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
@@ -927,14 +935,21 @@ class Modeller(object):
 
                                 nd1IsBonded = False
                                 ne2IsBonded = False
-                                for acceptor in acceptors:
+                                for acceptorIndex in cells.neighbors(nd1Pos.value_in_unit(nanometer)):
+                                    acceptor = acceptors[acceptorIndex]
                                     if acceptor.residue != residue:
                                         acceptorPos = self.positions[acceptor.index]
                                         if isHbond(nd1Pos, hd1Pos, acceptorPos):
                                             nd1IsBonded = True
                                             break
-                                        if isHbond(ne2Pos, he2Pos, acceptorPos):
-                                            ne2IsBonded = True
+                                if not nd1IsBonded:
+                                    for acceptorIndex in cells.neighbors(ne2Pos.value_in_unit(nanometer)):
+                                        acceptor = acceptors[acceptorIndex]
+                                        if acceptor.residue != residue:
+                                            acceptorPos = self.positions[acceptor.index]
+                                            if isHbond(ne2Pos, he2Pos, acceptorPos):
+                                                ne2IsBonded = True
+                                                break
                                 if ne2IsBonded and not nd1IsBonded:
                                     variant = 'HIE'
                                 else:
@@ -1141,6 +1156,50 @@ class Modeller(object):
 
         templates = forcefield._matchAllResiduesToTemplates(ForceField._SystemData(self.topology), self.topology, residueTemplates, False, True, False)
 
+        # Identify extra points to add.  Record information about each one we will need when adding it.
+
+        ExtraPoint = namedtuple('ExtraPoint', ['matchedResidue', 'template', 'templateAtom', 'matchingAtoms', 'templateAtomPositions'])
+        extraPoints = defaultdict(list)
+        from openmm.app.topology import MergedResidue
+        for matchedResidue, template in templates.items():
+            if len(template.atoms) != len(list(matchedResidue.atoms())):
+                matches = compiled.matchResidueToTemplate(matchedResidue, template, bondedToAtom, ignoreExternalBonds, True)
+                atomsNoEP = [a for a in matchedResidue.atoms() if a.element is not None]
+                templateAtomsNoEP = [a for a in template.atoms if a.element is not None]
+                matchingAtoms = {}
+                for atom, match in zip(atomsNoEP, matches):
+                    templateAtomName = templateAtomsNoEP[match].name
+                    for templateAtom in template.atoms:
+                        if templateAtom.name == templateAtomName:
+                            matchingAtoms[templateAtom] = atom
+                templateAtomPositions = len(template.atoms)*[None]
+                for index, atom in enumerate(template.atoms):
+                    if atom in matchingAtoms:
+                        templateAtomPositions[index] = self.positions[matchingAtoms[atom].index].value_in_unit(nanometer)
+                for index, atom in enumerate(template.atoms):
+                    if atom.element is None:
+                        # This is an extra particle.  Figure out what residue it belongs to.
+                        residue = None
+                        if not isinstance(matchedResidue, MergedResidue):
+                            residue = matchedResidue
+                        else:
+                            if atom.type in drudeTypeMap:
+                                # It's a Drude particle.
+                                for atom2 in template.atoms:
+                                    if atom2.type in drudeTypeMap[atom.type]:
+                                        residue = matchingAtoms[atom2].residue
+                                        break
+                            if residue is None:
+                                for site in template.virtualSites:
+                                    if site.index == index:
+                                        # It's a virtual site.
+                                        residue = matchingAtoms[template.atoms[site.atoms[0]]].residue
+                                        break
+                            if residue is None:
+                                # Neither a virtual site nor a Drude particle???  Just guess at the residue.
+                                residue = matchedResidue.residues[0]
+                        extraPoints[residue].append(ExtraPoint(matchedResidue, template, atom, matchingAtoms, templateAtomPositions))
+
         # Create the new Topology.
 
         newTopology = Topology()
@@ -1155,8 +1214,7 @@ class Modeller(object):
                 newResidue = newTopology.addResidue(residue.name, newChain, residue.id, residue.insertionCode)
                 if residue in residueTemplates:
                     newResidueTemplates[newResidue] = residueTemplates[residue]
-                template = templates[residue.index]
-                if len(template.atoms) == len(list(residue.atoms())):
+                if residue not in extraPoints:
                     # Just copy the residue over.
 
                     for atom in residue.atoms():
@@ -1164,18 +1222,6 @@ class Modeller(object):
                         newAtoms[atom] = newAtom
                         newPositions.append(deepcopy(self.positions[atom.index]))
                 else:
-                    # Record the corresponding atoms.
-
-                    matches = compiled.matchResidueToTemplate(residue, template, bondedToAtom, ignoreExternalBonds, True)
-                    atomsNoEP = [a for a in residue.atoms() if a.element is not None]
-                    templateAtomsNoEP = [a for a in template.atoms if a.element is not None]
-                    matchingAtoms = {}
-                    for atom, match in zip(atomsNoEP, matches):
-                        templateAtomName = templateAtomsNoEP[match].name
-                        for templateAtom in template.atoms:
-                            if templateAtom.name == templateAtomName:
-                                matchingAtoms[templateAtom] = atom
-
                     # Add the regular atoms.
 
                     for atom in residue.atoms():
@@ -1185,19 +1231,18 @@ class Modeller(object):
 
                     # Add the extra points.
 
-                    templateAtomPositions = len(template.atoms)*[None]
-                    for index, atom in enumerate(template.atoms):
-                        if atom in matchingAtoms:
-                            templateAtomPositions[index] = self.positions[matchingAtoms[atom].index].value_in_unit(nanometer)
                     newExtraPoints = {}
-                    for index, atom in enumerate(template.atoms):
-                        if atom.element is None:
-                            newExtraPoints[atom] = newTopology.addAtom(atom.name, None, newResidue)
-                            position = None
-                            for site in template.virtualSites:
-                                if site.index == index:
-                                    # This is a virtual site.  Compute its position by the correct rule.
+                    for extraPoint in extraPoints[residue]:
+                        atom = extraPoint.templateAtom
+                        template = extraPoint.template
+                        templateAtomPositions = extraPoint.templateAtomPositions
+                        newExtraPoints[atom] = newTopology.addAtom(atom.name, None, newResidue)
+                        position = None
+                        for site in extraPoint.template.virtualSites:
+                            if template.atoms[site.index] == atom:
+                                # This is a virtual site.  Compute its position by the correct rule.
 
+                                try:
                                     if site.type == 'average2':
                                         position = site.weights[0]*templateAtomPositions[site.atoms[0]] + site.weights[1]*templateAtomPositions[site.atoms[1]]
                                     elif site.type == 'average3':
@@ -1212,27 +1257,35 @@ class Modeller(object):
                                         xdir = unit.sum([templateAtomPositions[atom]*weight for atom, weight in zip(site.atoms, site.xWeights)])
                                         ydir = unit.sum([templateAtomPositions[atom]*weight for atom, weight in zip(site.atoms, site.yWeights)])
                                         zdir = Vec3(xdir[1]*ydir[2]-xdir[2]*ydir[1], xdir[2]*ydir[0]-xdir[0]*ydir[2], xdir[0]*ydir[1]-xdir[1]*ydir[0])
-                                        xdir /= norm(xdir);
-                                        zdir /= norm(zdir);
+                                        xdir /= norm(xdir)
+                                        zdir /= norm(zdir)
                                         ydir = Vec3(zdir[1]*xdir[2]-zdir[2]*xdir[1], zdir[2]*xdir[0]-zdir[0]*xdir[2], zdir[0]*xdir[1]-zdir[1]*xdir[0])
-                                        position = origin + xdir*site.localPos[0] + ydir*site.localPos[1] + zdir*site.localPos[2];
-                            if position is None and atom.type in drudeTypeMap:
-                                # This is a Drude particle.  Put it on top of its parent atom.
+                                        position = origin + xdir*site.localPos[0] + ydir*site.localPos[1] + zdir*site.localPos[2]
+                                except:
+                                    # This can happen if the virtual site depends on another virtual site whose position
+                                    # hasn't been set yet.  Ignore the error.  We'll put it at a random position (see below),
+                                    # which will get replaced with the correct position at the start of the simulation.
 
-                                for atom2, pos in zip(template.atoms, templateAtomPositions):
-                                    if atom2.type in drudeTypeMap[atom.type]:
-                                        position = deepcopy(pos)
-                            if position is None:
-                                # We couldn't figure out the correct position.  Put it at a random position near the center of the residue,
-                                # and we'll try to fix it later based on bonds.
+                                    pass
+                        if position is None and atom.type in drudeTypeMap:
+                            # This is a Drude particle.  Put it on top of its parent atom.
 
-                                knownPositions = [x for x in templateAtomPositions if x is not None]
-                                position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
-                                missingPositions.add(len(newPositions))
-                            newPositions.append(position*nanometer)
+                            for atom2, pos in zip(template.atoms, templateAtomPositions):
+                                if atom2.type in drudeTypeMap[atom.type]:
+                                    position = deepcopy(pos)
+                        if position is None:
+                            # We couldn't figure out the correct position.  Put it at a random position near the center of the residue,
+                            # and we'll try to fix it later based on bonds.
+
+                            knownPositions = [x for x in templateAtomPositions if x is not None]
+                            position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
+                            missingPositions.add(len(newPositions))
+                        newPositions.append(position*nanometer)
 
                     # Add bonds involving the extra points.
 
+                    template = extraPoints[residue][0].template
+                    matchingAtoms = extraPoints[residue][0].matchingAtoms
                     for atom1, atom2 in template.bonds:
                         atom1 = template.atoms[atom1]
                         atom2 = template.atoms[atom2]
@@ -1283,7 +1336,8 @@ class Modeller(object):
         self.positions = newPositions
 
 
-    def addMembrane(self, forcefield, lipidType='POPC', membraneCenterZ=0*nanometer, minimumPadding=1*nanometer, positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*molar, neutralize=True, residueTemplates=dict()):
+    def addMembrane(self, forcefield, lipidType='POPC', membraneCenterZ=0*nanometer, minimumPadding=1*nanometer, positiveIon='Na+', negativeIon='Cl-',
+                    ionicStrength=0*molar, neutralize=True, residueTemplates=dict(), platform=None):
         """Add a lipid membrane to the model.
 
         This method actually adds both a membrane and a water box.  It is best to build them together,
@@ -1341,6 +1395,9 @@ class Modeller(object):
             templates to use for them.  This is useful when a ForceField contains multiple templates
             that can match the same residue (e.g Fe2+ and Fe3+ templates in the ForceField for a
             monoatomic iron ion in the Topology).
+        platform : Platform=None
+            the Platform to use when computing the hydrogen atom positions.  If
+            this is None, the default Platform will be used.
         """
         if 'topology' in dir(lipidType) and 'positions' in dir(lipidType):
             patch = lipidType
@@ -1479,7 +1536,7 @@ class Modeller(object):
                 lipidResNum += 1
 
                 for atom in residue.atoms():
-                    newAtom = membraneTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                    newAtom = membraneTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                     newAtoms[atom] = newAtom
                 membranePos += pos
                 for bond in resBonds[residue]:
@@ -1494,7 +1551,7 @@ class Modeller(object):
         for (residue, pos) in addedWater:
             newResidue = membraneTopology.addResidue(residue.name, solventChain, residue.id, residue.insertionCode)
             for atom in residue.atoms():
-                newAtom = membraneTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
+                newAtom = membraneTopology.addAtom(atom.name, atom.element, newResidue, atom.id, atom.formalCharge)
                 newAtoms[atom] = newAtom
             membranePos += pos
             for bond in resBonds[residue]:
@@ -1540,7 +1597,10 @@ class Modeller(object):
 
         steps = int(max(proteinSize.x, proteinSize.y)*10) + 1
         integrator = LangevinIntegrator(10.0, 50.0, 0.001)
-        context = Context(system, integrator)
+        if platform is None:
+            context = Context(system, integrator)
+        else:
+            context = Context(system, integrator, platform)
         context.setPositions(mergedPositions)
         LocalEnergyMinimizer.minimize(context, 10.0, 30)
         try:
@@ -1575,7 +1635,11 @@ class Modeller(object):
 
         needExtraWater = (boxSizeZ > patchSize[2])
         if needExtraWater:
-            modeller.addSolvent(forcefield, neutralize=False, residueTemplates=residueTemplates)
+            newResidueTemplates = {}
+            for r1, r2 in zip(self.topology.residues(), modeller.topology.residues()):
+                if r1 in residueTemplates:
+                    newResidueTemplates[r2] = residueTemplates[r1]
+            modeller.addSolvent(forcefield, neutralize=False, residueTemplates=newResidueTemplates)
 
         # Record the positions of all waters that have been added.
 
@@ -1653,6 +1717,14 @@ class _CellList(object):
     """This class organizes atom positions into cells, so the neighbors of a point can be quickly retrieved"""
 
     def __init__(self, positions, maxCutoff, vectors, periodic):
+        if vectors is None:
+            if len(positions) == 0:
+                vectors = (Vec3(maxCutoff, 0, 0), Vec3(0, maxCutoff, 0), Vec3(0, 0, maxCutoff))
+            else:
+                minPos = [min((pos[i] for pos in positions)) for i in range(3)]
+                maxPos = [max((pos[i] for pos in positions)) for i in range(3)]
+                width = [max(maxPos[i]-minPos[i], maxCutoff) for i in range(3)]
+                vectors = (Vec3(width[0], 0, 0), Vec3(0, width[1], 0), Vec3(0, 0, width[2]))
         self.positions = deepcopy(positions)
         self.cells = {}
         self.numCells = tuple((max(1, int(floor(vectors[i][i]/maxCutoff))) for i in range(3)))

@@ -1,12 +1,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2008-2024 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -28,6 +26,14 @@
 #include "OpenCLParallelKernels.h"
 #include "openmm/common/CommonKernels.h"
 #include "openmm/common/CommonParallelKernels.h"
+#include "openmm/common/CommonCalcCustomGBForceKernel.h"
+#include "openmm/common/CommonCalcCustomHbondForceKernel.h"
+#include "openmm/common/CommonCalcCustomManyParticleForceKernel.h"
+#include "openmm/common/CommonCalcCustomNonbondedForceKernel.h"
+#include "openmm/common/CommonIntegrateCustomStepKernel.h"
+#include "openmm/common/CommonIntegrateNoseHooverStepKernel.h"
+#include "openmm/common/CommonIntegrateQTBStepKernel.h"
+#include "openmm/common/CommonMinimizeKernel.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
 
@@ -76,6 +82,8 @@ KernelImpl* OpenCLKernelFactory::createKernelImpl(std::string name, const Platfo
         return new CommonApplyConstraintsKernel(name, platform, cl);
     if (name == VirtualSitesKernel::Name())
         return new CommonVirtualSitesKernel(name, platform, cl);
+    if (name == MinimizeKernel::Name())
+        return new CommonMinimizeKernel(name, platform, cl);
     if (name == CalcHarmonicBondForceKernel::Name())
         return new CommonCalcHarmonicBondForceKernel(name, platform, cl, context.getSystem());
     if (name == CalcCustomBondForceKernel::Name())
@@ -94,6 +102,8 @@ KernelImpl* OpenCLKernelFactory::createKernelImpl(std::string name, const Platfo
         return new CommonCalcCustomTorsionForceKernel(name, platform, cl, context.getSystem());
     if (name == CalcNonbondedForceKernel::Name())
         return new OpenCLCalcNonbondedForceKernel(name, platform, cl, context.getSystem());
+    if (name == CalcConstantPotentialForceKernel::Name())
+        return new OpenCLCalcConstantPotentialForceKernel(name, platform, cl, context.getSystem());
     if (name == CalcCustomNonbondedForceKernel::Name())
         return new CommonCalcCustomNonbondedForceKernel(name, platform, cl, context.getSystem());
     if (name == CalcGBSAOBCForceKernel::Name())
@@ -114,12 +124,20 @@ KernelImpl* OpenCLKernelFactory::createKernelImpl(std::string name, const Platfo
         return new OpenCLCalcATMForceKernel(name, platform, cl);
     if (name == CalcCustomCPPForceKernel::Name())
         return new CommonCalcCustomCPPForceKernel(name, platform, context, cl);
+    if (name == CalcOrientationRestraintForceKernel::Name())
+        return new CommonCalcOrientationRestraintForceKernel(name, platform, cl);
+    if (name == CalcPythonForceKernel::Name())
+        return new CommonCalcPythonForceKernel(name, platform, context, cl);
+    if (name == CalcRGForceKernel::Name())
+        return new CommonCalcRGForceKernel(name, platform, cl);
     if (name == CalcRMSDForceKernel::Name())
         return new CommonCalcRMSDForceKernel(name, platform, cl);
     if (name == CalcCustomManyParticleForceKernel::Name())
         return new CommonCalcCustomManyParticleForceKernel(name, platform, cl, context.getSystem());
     if (name == CalcGayBerneForceKernel::Name())
         return new CommonCalcGayBerneForceKernel(name, platform, cl);
+    if (name == CalcLCPOForceKernel::Name())
+        return new CommonCalcLCPOForceKernel(name, platform, cl);
     if (name == IntegrateVerletStepKernel::Name())
         return new CommonIntegrateVerletStepKernel(name, platform, cl);
     if (name == IntegrateLangevinMiddleStepKernel::Name())
@@ -132,6 +150,10 @@ KernelImpl* OpenCLKernelFactory::createKernelImpl(std::string name, const Platfo
         return new CommonIntegrateVariableLangevinStepKernel(name, platform, cl);
     if (name == IntegrateCustomStepKernel::Name())
         return new CommonIntegrateCustomStepKernel(name, platform, cl);
+    if (name == IntegrateDPDStepKernel::Name())
+        return new CommonIntegrateDPDStepKernel(name, platform, cl);
+    if (name == IntegrateQTBStepKernel::Name())
+        return new CommonIntegrateQTBStepKernel(name, platform, cl);
     if (name == ApplyAndersenThermostatKernel::Name())
         return new CommonApplyAndersenThermostatKernel(name, platform, cl);
     if (name == IntegrateNoseHooverStepKernel::Name())

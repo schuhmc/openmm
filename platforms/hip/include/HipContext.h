@@ -4,12 +4,10 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
- * Portions copyright (c) 2009-2024 Stanford University and the Authors.      *
+ * Portions copyright (c) 2009-2025 Stanford University and the Authors.      *
  * Portions copyright (c) 2020-2023 Advanced Micro Devices, Inc.              *
  * Authors: Peter Eastman, Nicholas Curtis                                    *
  * Contributors:                                                              *
@@ -46,7 +44,6 @@
     // Prevent Windows from defining macros that interfere with other code.
     #define NOMINMAX
 #endif
-#include <pthread.h>
 #include <hip/hip_runtime.h>
 #include "openmm/common/windowsExportCommon.h"
 #include "HipArray.h"
@@ -55,7 +52,6 @@
 #include "HipIntegrationUtilities.h"
 #include "HipNonbondedUtilities.h"
 #include "HipPlatform.h"
-#include "HipFFT3D.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/common/ComputeContext.h"
 #include "openmm/Kernel.h"
@@ -158,22 +154,24 @@ public:
      */
     std::vector<ComputeContext*> getAllContexts();
     /**
+     * Get the ContextImpl is ComputeContext is associated with.
+     */
+    ContextImpl* getContextImpl() {
+        return platformData.context;
+    }
+    /**
      * Get a workspace used for accumulating energy when a simulation is parallelized across
      * multiple devices.
      */
     double& getEnergyWorkspace();
     /**
+     * Create a new ComputeQueue for use with this context.
+     */
+    ComputeQueue createQueue();
+    /**
      * Get the stream currently being used for execution.
      */
     hipStream_t getCurrentStream();
-    /**
-     * Set the stream to use for execution.
-     */
-    void setCurrentStream(hipStream_t stream);
-    /**
-     * Reset the context to using the default stream for execution.
-     */
-    void restoreDefaultStream();
     /**
      * Construct an uninitialized array of the appropriate class for this platform.  The returned
      * value should be created on the heap with the "new" operator.
@@ -184,21 +182,32 @@ public:
      */
     ComputeEvent createEvent();
     /**
-     * Create a new HipFFT3D.
+     * Construct a ComputeSort object of the appropriate class for this platform.
+     * 
+     * @param trait      a SortTrait defining the type of data to sort.  It should have been allocated
+     *                   on the heap with the "new" operator.  This object takes over ownership of it,
+     *                   and deletes it when the ComputeSort is deleted.
+     * @param length     the length of the arrays this object will be used to sort
+     * @param uniform    whether the input data is expected to follow a uniform or nonuniform
+     *                   distribution.  This argument is used only as a hint.  It allows parts
+     *                   of the algorithm to be tuned for faster performance on the expected
+     *                   distribution.
+     */
+    ComputeSort createSort(ComputeSortImpl::SortTrait* trait, unsigned int length, bool uniform=true);
+    /**
+     * Create an object for performing 3D FFTs.  The caller is responsible for deleting
+     * the object when it is no longer needed.
      *
      * @param xsize   the first dimension of the data sets on which FFTs will be performed
      * @param ysize   the second dimension of the data sets on which FFTs will be performed
      * @param zsize   the third dimension of the data sets on which FFTs will be performed
      * @param realToComplex  if true, a real-to-complex transform will be done.  Otherwise, it is complex-to-complex.
-     * @param stream  HIP stream
-     * @param in      the data to transform, ordered such that in[x*ysize*zsize + y*zsize + z] contains element (x, y, z)
-     * @param out     on exit, this contains the transformed data
      */
-    HipFFT3D* createFFT(int xsize, int ysize, int zsize, bool realToComplex, hipStream_t stream, HipArray& in, HipArray& out);
+    FFT3D createFFT(int xsize, int ysize, int zsize, bool realToComplex=false);
     /**
-     * Get the smallest legal size for a dimension of the grid supported by the FFT.
+     * Get the smallest legal size for a dimension of the grid.
      */
-    virtual int findLegalFFTDimension(int minimum);
+    int findLegalFFTDimension(int minimum);
     /**
      * Compile source code to create a ComputeProgram.
      *
@@ -627,6 +636,7 @@ private:
     int multiprocessors;
     int sharedMemPerBlock;
     bool supportsHardwareFloatGlobalAtomicAdd;
+    unsigned int hostMallocFlags;
     bool useBlockingSync, useDoublePrecision, useMixedPrecision, contextIsValid, boxIsTriclinic, hasAssignedPosqCharges;
     bool isLinkedContext;
     std::string tempDir, cacheDir, gpuArchitecture;
@@ -635,8 +645,6 @@ private:
     std::map<std::string, std::string> compilationDefines;
     std::vector<hipModule_t> loadedModules;
     hipDevice_t device;
-    hipStream_t currentStream;
-    hipStream_t defaultStream;
     hipFunction_t clearBufferKernel;
     hipFunction_t clearTwoBuffersKernel;
     hipFunction_t clearThreeBuffersKernel;

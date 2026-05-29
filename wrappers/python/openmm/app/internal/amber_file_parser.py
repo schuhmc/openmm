@@ -7,10 +7,8 @@
 """
 Tools for constructing systems from AMBER prmtop/crd files.
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
+This is part of the OpenMM molecular simulation toolkit.
+See https://openmm.org/development.
 
 Portions copyright (c) 2012-2023 Stanford University and the Authors.
 Authors: Randall J. Radmer, John D. Chodera, Peter Eastman
@@ -56,13 +54,14 @@ from openmm.app import element as elem
 from openmm.app.internal.unitcell import computePeriodicBoxVectors
 from openmm.vec3 import Vec3
 from . import customgbforces as customgb
+from . import lcpo
 
 #=============================================================================================
 # AMBER parmtop loader (from 'zander', by Randall J. Radmer)
 #=============================================================================================
 
 # A regex for extracting print format info from the FORMAT lines.
-FORMAT_RE_PATTERN=re.compile("([0-9]+)\(?([a-zA-Z]+)([0-9]+)\.?([0-9]*)\)?")
+FORMAT_RE_PATTERN=re.compile(r"([0-9]+)\(?([a-zA-Z]+)([0-9]+)\.?([0-9]*)\)?")
 
 # Pointer labels which map to pointer numbers at top of prmtop files
 POINTER_LABELS  = """
@@ -676,7 +675,7 @@ def readAmberSystem(topology, prmtop_filename=None, prmtop_loader=None, shake=No
           implicitSolventKappa=0.0*(1/units.nanometer), nonbondedCutoff=None,
           nonbondedMethod='NoCutoff', scee=None, scnb=None, mm=None, verbose=False,
           EwaldErrorTolerance=None, flexibleConstraints=True, rigidWater=True, elements=None,
-          gbsaModel='ACE'):
+          sasaMethod='ACE'):
     """
     Create an OpenMM System from an Amber prmtop file.
 
@@ -698,9 +697,9 @@ def readAmberSystem(topology, prmtop_filename=None, prmtop_loader=None, shake=No
       scee (float) - 1-4 electrostatics scaling factor (default: taken from prmtop or 2.0 if not present there)
       mm - if specified, this module will be used in place of pyopenmm (default: None)
       verbose (boolean) - if True, print out information on progress (default: False)
-      flexibleConstraints (boolean) - if True, flexible bonds will be added in addition ot constrained bonds
+      flexibleConstraints (boolean) - if True, flexible bonds will be added in addition to constrained bonds
       rigidWater (boolean=True) If true, water molecules will be fully rigid regardless of the value passed for the shake argument
-      gbsaModel (str='ACE') The string representing the SA model to use for GB calculations. Must be 'ACE' or None
+      sasaMethod (str='ACE') The string representing the SA model to use for GB calculations. Must be 'ACE', 'LCPO', or None
 
     NOTES
 
@@ -746,8 +745,8 @@ def readAmberSystem(topology, prmtop_filename=None, prmtop_loader=None, shake=No
         warnings.warn("1-4 scaling parameters in topology file are being ignored. "
             "This is not recommended unless you know what you are doing.")
 
-    if gbmodel is not None and gbsaModel not in ('ACE', None):
-        raise ValueError('gbsaModel must be ACE or None')
+    if gbmodel is not None and sasaMethod not in ('ACE', 'LCPO', None):
+        raise ValueError('sasaMethod must be ACE, LCPO, or None')
 
     has_1264 = 'LENNARD_JONES_CCOEF' in prmtop._raw_data.keys()
     if has_1264:
@@ -1037,6 +1036,8 @@ def readAmberSystem(topology, prmtop_filename=None, prmtop_loader=None, shake=No
 
     # Copy the exceptions as exclusions to the CustomNonbondedForce if we have
     # NBFIX terms
+    if nbfix and nonbondedMethod == 'LJPME':
+        raise ValueError('LJPME is not supported with modified off-diagonal Lennard-Jones coefficients')
     if nbfix or has_1264:
         for i in range(force.getNumExceptions()):
             ii, jj, chg, sig, eps = force.getExceptionParameters(i)
@@ -1129,22 +1130,22 @@ def readAmberSystem(topology, prmtop_filename=None, prmtop_loader=None, shake=No
             if units.is_quantity(cutoff):
                 cutoff = cutoff.value_in_unit(units.nanometers)
         if gbmodel == 'HCT':
-            gb = customgb.GBSAHCTForce(solventDielectric, soluteDielectric, gbsaModel, cutoff, implicitSolventKappa)
+            gb = customgb.GBSAHCTForce(solventDielectric, soluteDielectric, sasaMethod, cutoff, implicitSolventKappa)
         elif gbmodel == 'OBC1':
-            gb = customgb.GBSAOBC1Force(solventDielectric, soluteDielectric, gbsaModel, cutoff, implicitSolventKappa)
+            gb = customgb.GBSAOBC1Force(solventDielectric, soluteDielectric, sasaMethod, cutoff, implicitSolventKappa)
         elif gbmodel == 'OBC2':
             if implicitSolventKappa > 0:
-                gb = customgb.GBSAOBC2Force(solventDielectric, soluteDielectric, gbsaModel, cutoff, implicitSolventKappa)
+                gb = customgb.GBSAOBC2Force(solventDielectric, soluteDielectric, sasaMethod, cutoff, implicitSolventKappa)
             else:
                 gb = mm.GBSAOBCForce()
                 gb.setSoluteDielectric(soluteDielectric)
                 gb.setSolventDielectric(solventDielectric)
-                if gbsaModel is None:
+                if sasaMethod != 'ACE':
                     gb.setSurfaceAreaEnergy(0)
         elif gbmodel == 'GBn':
-            gb = customgb.GBSAGBnForce(solventDielectric, soluteDielectric, gbsaModel, cutoff, implicitSolventKappa)
+            gb = customgb.GBSAGBnForce(solventDielectric, soluteDielectric, sasaMethod, cutoff, implicitSolventKappa)
         elif gbmodel == 'GBn2':
-            gb = customgb.GBSAGBn2Force(solventDielectric, soluteDielectric, gbsaModel, cutoff, implicitSolventKappa)
+            gb = customgb.GBSAGBn2Force(solventDielectric, soluteDielectric, sasaMethod, cutoff, implicitSolventKappa)
         else:
             raise ValueError("Illegal value specified for implicit solvent model")
         if isinstance(gb, mm.GBSAOBCForce):
@@ -1198,6 +1199,9 @@ def readAmberSystem(topology, prmtop_filename=None, prmtop_loader=None, shake=No
         # This applies the reaction field dielectric to the NonbondedForce
         # created above. Do not bind force to another name before this!
         force.setReactionFieldDielectric(1.0)
+
+        if sasaMethod == 'LCPO':
+            lcpo.addLCPOForce(system, lcpo.getLCPOParamsAmber(prmtop, elements), nonbondedMethod == 'CutoffPeriodic')
 
     return system
 

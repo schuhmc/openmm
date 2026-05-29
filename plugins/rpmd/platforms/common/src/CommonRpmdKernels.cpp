@@ -1,10 +1,8 @@
 /* -------------------------------------------------------------------------- *
  *                                   OpenMM                                   *
  * -------------------------------------------------------------------------- *
- * This is part of the OpenMM molecular simulation toolkit originating from   *
- * Simbios, the NIH National Center for Physics-Based Simulation of           *
- * Biological Structures at Stanford, funded under the NIH Roadmap for        *
- * Medical Research, grant U54 GM072970. See https://simtk.org.               *
+ * This is part of the OpenMM molecular simulation toolkit.                   *
+ * See https://openmm.org/development.                                        *
  *                                                                            *
  * Portions copyright (c) 2011-2021 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
@@ -299,7 +297,10 @@ void CommonIntegrateRPMDStepKernel::computeForces(ContextImpl& context) {
         context.getPeriodicBoxVectors(finalBox[0], finalBox[1], finalBox[2]);
         if (initialBox[0] != finalBox[0] || initialBox[1] != finalBox[1] || initialBox[2] != finalBox[2])
             throw OpenMMException("Standard barostats cannot be used with RPMDIntegrator.  Use RPMDMonteCarloBarostat instead.");
-        context.calcForcesAndEnergy(true, false, groupsNotContracted);
+        {
+            ContextDeselector deselector(cc);
+            context.calcForcesAndEnergy(true, false, groupsNotContracted);
+        }
         copyFromContextKernel->setArg(7, i);
         copyFromContextKernel->execute(cc.getNumAtoms());
     }
@@ -324,7 +325,10 @@ void CommonIntegrateRPMDStepKernel::computeForces(ContextImpl& context) {
                 copyToContextKernel->setArg(5, i);
                 copyToContextKernel->execute(cc.getNumAtoms());
                 context.computeVirtualSites();
-                context.calcForcesAndEnergy(true, false, groupFlags);
+                {
+                    ContextDeselector deselector(cc);
+                    context.calcForcesAndEnergy(true, false, groupFlags);
+                }
                 copyFromContextKernel->setArg(7, i);
                 copyFromContextKernel->execute(cc.getNumAtoms());
             }
