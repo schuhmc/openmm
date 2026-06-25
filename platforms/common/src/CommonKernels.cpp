@@ -6,7 +6,7 @@
  *                                                                            *
  * Portions copyright (c) 2008-2026 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
- * Contributors:                                                              *
+ * Contributors: Marc Schuh                                                   *
  *                                                                            *
  * This program is free software: you can redistribute it and/or modify       *
  * it under the terms of the GNU Lesser General Public License as published   *
@@ -2638,10 +2638,13 @@ void CommonCalcCustomCVForceKernel::initialize(const System& system, const Custo
     // Create the kernels.
 
     stringstream args, add;
+    add << "mm_long fsum = 0;\n";
     for (int i = 0; i < numCVs; i++) {
         args << ", GLOBAL mm_long * RESTRICT force" << i << ", real dEdV" << i;
-        add << "forces[i] += (mm_long) (force" << i << "[i]*dEdV" << i << ");\n";
+        add << "fsum += (mm_long) (force" << i << "[i]*dEdV" << i << ");\n";
     }
+    add << "ATOMIC_ADD(&forces[i], (mm_ulong) fsum);\n";
+
     map<string, string> replacements;
     replacements["PARAMETER_ARGUMENTS"] = args.str();
     replacements["ADD_FORCES"] = add.str();

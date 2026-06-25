@@ -36,7 +36,7 @@ KERNEL void copyForces(GLOBAL mm_long* RESTRICT forces, GLOBAL int* RESTRICT inv
 /**
  * Add all the forces from the CVs.
  */
-KERNEL void addForces(GLOBAL mm_long* RESTRICT forces, int bufferSize
+KERNEL void addForces(GLOBAL mm_ulong* RESTRICT forces, int bufferSize
     PARAMETER_ARGUMENTS) {
     for (int i = GLOBAL_ID; i < bufferSize; i += GLOBAL_SIZE) {
         ADD_FORCES
